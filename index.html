@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tank Arena</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-family: Arial, sans-serif;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Tank Arena - Versión Un Jugador</div>
+    
+    <!-- Importamos Three.js desde CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/loaders/GLTFLoader.js"></script>
+    
+    <!-- Archivos del juego -->
+    <script src="js/utils/helpers.js"></script>
+    <script src="js/utils/physics.js"></script>
+    <script src="js/models/tank.js"></script>
+    <script src="js/models/enemyTank.js"></script>
+    <script src="js/models/terrain.js"></script>
+    <script src="js/models/projectile.js"></script>
+    <script src="js/ui/healthBar.js"></script>
+    <script src="js/controllers/inputController.js"></script>
+    <script src="js/controllers/gameController.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
