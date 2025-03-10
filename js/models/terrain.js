@@ -2,10 +2,10 @@ class Terrain {
     constructor(scene) {
         this.scene = scene;
         
-        // Dimensiones del terreno (4 veces más grande)
-        this.width = 200;
-        this.height = 200;
-        this.resolution = 1; // Resolución de la malla
+        // Dimensiones del terreno (40 veces más grande que el original)
+        this.width = 2000;
+        this.height = 2000;
+        this.resolution = 2; // Aumentamos la resolución de la malla para optimizar rendimiento
         
         // Crear el terreno
         this.createTerrain();
@@ -37,7 +37,9 @@ class Terrain {
             side: THREE.DoubleSide,
             // Habilitar el mapa de desplazamiento para más detalle visual
             displacementScale: 0.5,
-            displacementBias: -0.2
+            displacementBias: -0.2,
+            // Habilitar colores de vértices para zonas de asfalto y tierra
+            vertexColors: true
         });
         
         // Crear la malla del terreno
@@ -61,6 +63,9 @@ class Terrain {
         // Obtener los vértices de la geometría
         const vertices = geometry.attributes.position.array;
         
+        // Crear un array para almacenar la altura de cada vértice para usarlo en la textura
+        this.vertexHeights = [];
+        
         // Crear algunas colinas y valles usando funciones de ruido
         for (let i = 0; i < vertices.length; i += 3) {
             const x = vertices[i];
@@ -69,6 +74,7 @@ class Terrain {
             // Evitar elevar el terreno en el centro (zona de inicio) - área más grande
             const distanceFromCenter = Math.sqrt(x * x + z * z);
             if (distanceFromCenter < 30) {
+                this.vertexHeights.push(0); // Altura 0 para zona plana central
                 continue;
             }
             
@@ -93,6 +99,9 @@ class Terrain {
             
             // Aplicar la elevación
             vertices[i + 1] = elevation;
+            
+            // Guardar la altura para usarla en la textura
+            this.vertexHeights.push(elevation);
         }
         
         // Actualizar la geometría
@@ -100,6 +109,9 @@ class Terrain {
         
         // Recalcular normales para iluminación correcta
         geometry.computeVertexNormals();
+        
+        // Crear un atributo de color para los vértices basado en la altura
+        this.addVertexColors(geometry);
     }
     
     generateHeightMap() {
@@ -172,29 +184,32 @@ class Terrain {
         canvas.height = 2048;
         const context = canvas.getContext('2d');
         
-        // Rellenar el fondo de color verde (hierba)
-        context.fillStyle = '#4D8E53';
+        // Rellenar el fondo de color gris oscuro (asfalto)
+        context.fillStyle = '#333333';
         context.fillRect(0, 0, canvas.width, canvas.height);
         
-        // Añadir variaciones de color para simular terreno natural
-        this.addTextureVariations(context, canvas.width, canvas.height);
+        // Añadir variaciones de color para simular asfalto
+        this.addAsphaltTexture(context, canvas.width, canvas.height);
         
         // Crear la textura de Three.js
         const texture = new THREE.CanvasTexture(canvas);
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.RepeatWrapping;
-        texture.repeat.set(8, 8); // Repetir la textura más veces
+        texture.repeat.set(16, 16); // Repetir la textura más veces para mayor detalle
         
         return texture;
     }
     
-    addTextureVariations(context, width, height) {
-        // Añadir variaciones aleatorias en la textura (más para el mapa grande)
-        for (let i = 0; i < 4000; i++) {
+    addAsphaltTexture(context, width, height) {
+        // Añadir variaciones aleatorias en la textura para simular asfalto
+        for (let i = 0; i < 15000; i++) {
             const x = Math.random() * width;
             const y = Math.random() * height;
-            const radius = 2 + Math.random() * 10;
-            const color = Math.random() < 0.5 ? '#3E7542' : '#5EA066';
+            const radius = 1 + Math.random() * 3; // Puntos más pequeños para textura de asfalto
+            
+            // Variaciones de gris para simular asfalto
+            const grayValue = 40 + Math.floor(Math.random() * 30);
+            const color = `rgb(${grayValue}, ${grayValue}, ${grayValue + Math.floor(Math.random() * 10)})`;
             
             context.beginPath();
             context.fillStyle = color;
@@ -202,149 +217,65 @@ class Terrain {
             context.fill();
         }
         
-        // Añadir algunas "manchas" de tierra (más para el mapa grande)
-        for (let i = 0; i < 800; i++) {
-            const x = Math.random() * width;
-            const y = Math.random() * height;
-            const radius = 5 + Math.random() * 15;
-            const color = Math.random() < 0.5 ? '#8B4513' : '#A0522D';
+        // Ya no añadimos líneas de carretera
+    }
+    
+    // Este método ya no se utiliza
+    addRoadLines(context, width, height) {
+        // Método vacío, ya no añadimos líneas de carretera
+    }
+    
+    addVertexColors(geometry) {
+        // Crear un array para almacenar los colores de los vértices
+        const colors = [];
+        const vertices = geometry.attributes.position.array;
+        
+        // Asignar colores basados en la altura
+        for (let i = 0, j = 0; i < vertices.length; i += 3, j++) {
+            const height = vertices[i + 1];
             
-            context.beginPath();
-            context.fillStyle = color;
-            context.arc(x, y, radius, 0, Math.PI * 2);
-            context.fill();
+            if (height < 0.5) {
+                // Asfalto para zonas planas (gris oscuro)
+                colors.push(0.2, 0.2, 0.2);
+            } else if (height < 2) {
+                // Transición a tierra (mezcla de asfalto y tierra)
+                const ratio = (height - 0.5) / 1.5;
+                const asphaltRatio = 1 - ratio;
+                colors.push(
+                    0.2 * asphaltRatio + 0.55 * ratio, // R: de gris a marrón
+                    0.2 * asphaltRatio + 0.27 * ratio, // G: de gris a marrón
+                    0.2 * asphaltRatio + 0.07 * ratio  // B: de gris a marrón
+                );
+            } else {
+                // Tierra para zonas elevadas (marrón)
+                // Variación de marrón según la altura
+                const brownVariation = Math.min((height - 2) / 4, 1) * 0.2;
+                colors.push(
+                    0.55 - brownVariation, // R: marrón más oscuro en las partes más altas
+                    0.27 - brownVariation, // G
+                    0.07                    // B
+                );
+            }
         }
+        
+        // Añadir el atributo de color a la geometría
+        geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     }
     
     addTerrainDetails() {
-        // Añadir hierba
-        this.addGrass();
+        // No añadimos detalles al terreno
+        console.log("No se añadirán detalles al terreno (hierba ni rocas)");
         
-        // Añadir rocas
-        this.addRocks();
+        // Inicializar el array de rocas vacío para evitar errores
+        this.rocks = [];
     }
     
     addGrass() {
-        // Simulamos hierba con pequeños cilindros verdes (más para el mapa grande)
-        const grassCount = 2000;
-        
-        for (let i = 0; i < grassCount; i++) {
-            // Posición aleatoria dentro del terreno
-            const x = (Math.random() - 0.5) * this.width;
-            const z = (Math.random() - 0.5) * this.height;
-            
-            // Comprobar si está cerca del centro (evitar hierba en el área inicial)
-            const distanceFromCenter = Math.sqrt(x * x + z * z);
-            if (distanceFromCenter < 15) continue;
-            
-            // Obtener la altura del terreno en esta posición
-            const terrainHeight = this.getHeightAt(x, z);
-            
-            // Crear un cilindro para representar la hierba
-            const height = 0.3 + Math.random() * 0.5;
-            const geometry = new THREE.CylinderGeometry(0.05, 0, height, 4, 1);
-            
-            // Color de la hierba con ligera variación
-            const hue = 0.3 + (Math.random() * 0.1 - 0.05); // Verde con variación
-            const saturation = 0.7 + (Math.random() * 0.3 - 0.15);
-            const lightness = 0.4 + (Math.random() * 0.2 - 0.1);
-            
-            const color = new THREE.Color().setHSL(hue, saturation, lightness);
-            const material = new THREE.MeshStandardMaterial({ color: color });
-            
-            const grass = new THREE.Mesh(geometry, material);
-            
-            // Posicionar la hierba sobre el terreno
-            grass.position.set(x, terrainHeight + height / 2, z);
-            
-            // Rotación aleatoria para variedad
-            grass.rotation.y = Math.random() * Math.PI * 2;
-            grass.rotation.x = Math.random() * 0.2;
-            grass.rotation.z = Math.random() * 0.2;
-            
-            // Añadir a la escena
-            this.scene.add(grass);
-        }
+        // Método vacío - no se añade hierba
     }
     
     addRocks() {
-        // Añadir rocas al terreno (más para el mapa grande)
-        const rockCount = 120;
-        this.rocks = []; // Array para almacenar las rocas
-        
-        for (let i = 0; i < rockCount; i++) {
-            // Posición aleatoria dentro del terreno
-            const x = (Math.random() - 0.5) * this.width;
-            const z = (Math.random() - 0.5) * this.height;
-            
-            // Comprobar si está cerca del centro (evitar rocas en el área inicial)
-            const distanceFromCenter = Math.sqrt(x * x + z * z);
-            if (distanceFromCenter < 20) continue;
-            
-            // Obtener la altura del terreno en esta posición
-            const terrainHeight = this.getHeightAt(x, z);
-            
-            // Determinar si es una roca grande o pequeña
-            const isSmall = Math.random() < 0.7; // 70% de probabilidad de ser pequeña
-            
-            // Crear geometría para la roca
-            let geometry;
-            if (isSmall) {
-                // Roca pequeña (más simple)
-                geometry = new THREE.DodecahedronGeometry(0.5 + Math.random() * 0.5, 0);
-            } else {
-                // Roca grande (más compleja)
-                geometry = new THREE.DodecahedronGeometry(1 + Math.random() * 2, 1);
-            }
-            
-            // Deformar ligeramente la geometría para hacerla más natural
-            const vertices = geometry.attributes.position.array;
-            for (let j = 0; j < vertices.length; j += 3) {
-                vertices[j] += (Math.random() - 0.5) * 0.2;
-                vertices[j + 1] += (Math.random() - 0.5) * 0.2;
-                vertices[j + 2] += (Math.random() - 0.5) * 0.2;
-            }
-            geometry.attributes.position.needsUpdate = true;
-            geometry.computeVertexNormals();
-            
-            // Material de la roca
-            const color = 0x808080 + Math.floor(Math.random() * 0x202020);
-            const material = new THREE.MeshStandardMaterial({
-                color: color,
-                roughness: 0.8,
-                metalness: 0.2
-            });
-            
-            const rock = new THREE.Mesh(geometry, material);
-            
-            // Posicionar la roca sobre el terreno
-            rock.position.set(x, terrainHeight + (isSmall ? 0.25 : 1), z);
-            
-            // Rotación aleatoria
-            rock.rotation.x = Math.random() * Math.PI;
-            rock.rotation.y = Math.random() * Math.PI;
-            rock.rotation.z = Math.random() * Math.PI;
-            
-            // Escala aleatoria
-            const scale = isSmall ? 0.5 + Math.random() * 0.5 : 1 + Math.random() * 1.5;
-            rock.scale.set(scale, scale, scale);
-            
-            // Configurar sombras
-            rock.castShadow = true;
-            rock.receiveShadow = true;
-            
-            // Añadir física a la roca
-            const boundingRadius = isSmall ? scale * 0.5 : scale * 1.5;
-            rock.userData.physics = {
-                type: 'rock',
-                boundingRadius: boundingRadius,
-                isSmall: isSmall,
-                height: isSmall ? scale : scale * 2
-            };
-            
-            // Añadir a la escena y al array de rocas
-            this.scene.add(rock);
-            this.rocks.push(rock);
-        }
+        // Método vacío - no se añaden rocas
+        this.rocks = []; // Inicializar el array vacío para evitar errores
     }
 }

@@ -8,8 +8,14 @@ class InputController {
             right: false,
             turretLeft: false,
             turretRight: false,
-            fire: false
+            cannonUp: false,    // Nueva tecla para elevar el cañón
+            cannonDown: false,  // Nueva tecla para bajar el cañón
+            fire: false,
+            cameraToggle: false  // Tecla para cambiar la cámara
         };
+        
+        // Estado para controlar el cambio de cámara
+        this.cameraMode = 0; // 0: vista normal, 1: zoom cercano, 2: primera persona
         
         // Configuración
         this.setupEventListeners();
@@ -55,10 +61,10 @@ class InputController {
                 this.keys.turretRight = isPressed;
                 break;
             case 'ArrowUp':
-                // Opcional: Podría elevar el cañón si se implementa
+                this.keys.cannonUp = isPressed;
                 break;
             case 'ArrowDown':
-                // Opcional: Podría bajar el cañón si se implementa
+                this.keys.cannonDown = isPressed;
                 break;
                 
             // Disparo
@@ -66,6 +72,16 @@ class InputController {
                 this.keys.fire = isPressed;
                 // Eliminamos la llamada directa a fireProjectile para evitar disparos duplicados
                 // El disparo se manejará a través del método checkFiring del tanque
+                break;
+                
+            // Cambio de cámara con la tecla 2
+            case 'Digit2':
+                if (isPressed && !this.keys.cameraToggle) {
+                    // Solo cambiamos al presionar la tecla, no al mantenerla
+                    this.cameraMode = (this.cameraMode + 1) % 3; // Rotar entre 0, 1 y 2
+                    console.log(`Modo de cámara cambiado a: ${this.cameraMode}`);
+                }
+                this.keys.cameraToggle = isPressed;
                 break;
         }
     }
@@ -99,7 +115,20 @@ class InputController {
         return this.keys.turretRight;
     }
     
+    isCannonMovingUp() {
+        return this.keys.cannonUp;
+    }
+    
+    isCannonMovingDown() {
+        return this.keys.cannonDown;
+    }
+    
     isFirePressed() {
         return this.keys.fire;
+    }
+    
+    // Método para obtener el modo de cámara actual
+    getCameraMode() {
+        return this.cameraMode;
     }
 }

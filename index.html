@@ -16,6 +16,21 @@
             font-family: Arial, sans-serif;
             pointer-events: none;
         }
+        
+        /* Estilos para el radar */
+        #radar-container {
+            transition: opacity 0.3s ease;
+        }
+        
+        #radar-container:hover {
+            opacity: 0.9;
+        }
+        
+        /* Efecto de escaneo del radar */
+        @keyframes radarScan {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -33,7 +48,9 @@
     <script src="js/models/enemyTank.js"></script>
     <script src="js/models/terrain.js"></script>
     <script src="js/models/projectile.js"></script>
+    <script src="js/models/building.js"></script>
     <script src="js/ui/healthBar.js"></script>
+    <script src="js/ui/radar.js"></script>
     <script src="js/controllers/inputController.js"></script>
     <script src="js/controllers/gameController.js"></script>
     <script src="js/main.js"></script>

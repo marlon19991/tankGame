@@ -9,9 +9,9 @@ function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87CEEB); // Cielo azul claro
     
-    // Configurar cámara
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 10, 20);
+    // Configurar cámara con mayor distancia de visualización para el mapa gigante
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
+    camera.position.set(0, 30, 50);
     camera.lookAt(0, 0, 0);
     
     // Configurar renderizador
@@ -43,18 +43,18 @@ function setupLighting() {
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(ambientLight);
     
-    // Luz direccional principal (simula el sol)
+    // Luz direccional principal (simula el sol) - posición ajustada para mapa gigante
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(100, 100, 50);
+    directionalLight.position.set(500, 500, 250);
     directionalLight.castShadow = true;
     
-    // Configurar área de sombras para cubrir el mapa más grande
-    directionalLight.shadow.camera.left = -100;
-    directionalLight.shadow.camera.right = 100;
-    directionalLight.shadow.camera.top = 100;
-    directionalLight.shadow.camera.bottom = -100;
+    // Configurar área de sombras para cubrir el mapa gigante (10 veces más grande)
+    directionalLight.shadow.camera.left = -1000;
+    directionalLight.shadow.camera.right = 1000;
+    directionalLight.shadow.camera.top = 1000;
+    directionalLight.shadow.camera.bottom = -1000;
     directionalLight.shadow.camera.near = 0.5;
-    directionalLight.shadow.camera.far = 500;
+    directionalLight.shadow.camera.far = 3000;
     
     // Mejorar calidad de sombras
     directionalLight.shadow.mapSize.width = 2048;

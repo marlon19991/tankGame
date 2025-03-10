@@ -16,6 +16,12 @@ class Tank {
         this.turretAngle = 0;
         this.turretRotationSpeed = 1.5;
         
+        // Propiedades del cañón (elevación vertical)
+        this.cannonAngle = 0; // Ángulo de elevación del cañón en radianes
+        this.cannonMinAngle = -Math.PI / 9; // Límite inferior (-20 grados para arriba)
+        this.cannonMaxAngle = Math.PI / 36; // Límite superior (5 grados para abajo)
+        this.cannonRotationSpeed = 1.0; // Velocidad de rotación vertical
+        
         // Estado del tanque
         this.health = 100;
         this.lastFireTime = 0;
@@ -61,8 +67,19 @@ class Tank {
         this.turret.receiveShadow = true;
         this.tankGroup.add(this.turret);
         
+        // Añadir una base para el cañón que se integre mejor con la torreta
+        const cannonBaseGeometry = new THREE.CylinderGeometry(0.8, 0.8, 0.5, 16);
+        const cannonBaseMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x556B2F, 
+            roughness: 0.6
+        });
+        this.cannonBase = new THREE.Mesh(cannonBaseGeometry, cannonBaseMaterial);
+        this.cannonBase.position.z = 0.8;
+        this.cannonBase.rotation.x = Math.PI / 2;
+        this.turret.add(this.cannonBase);
+        
         // Crear el cañón
-        const cannonGeometry = new THREE.CylinderGeometry(0.3, 0.3, 4, 8);
+        const cannonGeometry = new THREE.CylinderGeometry(0.3, 0.4, 4, 8);
         // Trasladar el origen de la geometría para que el cañón se extienda hacia adelante desde su base
         cannonGeometry.translate(0, 2, 0);
         const cannonMaterial = new THREE.MeshStandardMaterial({ 
@@ -70,11 +87,25 @@ class Tank {
             roughness: 0.5
         });
         this.cannon = new THREE.Mesh(cannonGeometry, cannonMaterial);
-        this.cannon.rotation.x = Math.PI / 2;
-        this.cannon.position.z = 2;
+        this.cannon.rotation.x = Math.PI / 2; // Posición inicial horizontal
+        this.cannon.position.z = 1.5; // Acercar el cañón a la torreta
         this.cannon.castShadow = true;
         this.cannon.receiveShadow = true;
-        this.turret.add(this.cannon);
+        
+        // Añadir detalles al cañón para que se vea más integrado
+        const cannonEndGeometry = new THREE.CylinderGeometry(0.35, 0.35, 0.2, 8);
+        cannonEndGeometry.translate(0, 3.9, 0); // Colocarlo en el extremo del cañón
+        const cannonEndMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0x222222, 
+            roughness: 0.4
+        });
+        const cannonEnd = new THREE.Mesh(cannonEndGeometry, cannonEndMaterial);
+        this.cannon.add(cannonEnd);
+        
+        // Crear un grupo para el cañón que nos permita rotarlo verticalmente
+        this.cannonGroup = new THREE.Group();
+        this.cannonGroup.add(this.cannon);
+        this.turret.add(this.cannonGroup);
         
         // Crear las orugas
         this.createTracks();
@@ -323,15 +354,35 @@ class Tank {
     }
     
     updateTurretRotation(deltaTime, inputController) {
-        // Rotar la torreta independientemente del cuerpo
+        // Rotar la torreta horizontalmente
         if (inputController.isTurretTurningLeft()) {
             this.turretAngle += this.turretRotationSpeed * deltaTime;
         } else if (inputController.isTurretTurningRight()) {
             this.turretAngle -= this.turretRotationSpeed * deltaTime;
         }
         
-        // Aplicar la rotación en Y (rotación horizontal) en lugar de Z
+        // Aplicar la rotación horizontal de la torreta
         this.turret.rotation.y = this.turretAngle;
+        
+        // Mover el cañón verticalmente
+        if (inputController.isCannonMovingUp()) {
+            // Elevar el cañón (reducir el ángulo en X porque el cañón apunta hacia adelante)
+            this.cannonAngle -= this.cannonRotationSpeed * deltaTime;
+            // Limitar el ángulo máximo de elevación
+            if (this.cannonAngle < this.cannonMinAngle) {
+                this.cannonAngle = this.cannonMinAngle;
+            }
+        } else if (inputController.isCannonMovingDown()) {
+            // Bajar el cañón (aumentar el ángulo en X)
+            this.cannonAngle += this.cannonRotationSpeed * deltaTime;
+            // Limitar el ángulo máximo de descenso
+            if (this.cannonAngle > this.cannonMaxAngle) {
+                this.cannonAngle = this.cannonMaxAngle;
+            }
+        }
+        
+        // Aplicar la rotación vertical al cañón
+        this.cannonGroup.rotation.x = this.cannonAngle;
     }
     
     checkFiring(inputController, gameController) {
@@ -360,8 +411,7 @@ class Tank {
         // Ahora que hemos trasladado la geometría del cañón, la punta está en (0, 4, 0) en el espacio local del cañón
         const muzzlePosition = new THREE.Vector3(0, 4, 0).applyMatrix4(this.cannon.matrixWorld);
         
-        // Calcular la dirección del disparo correcta
-        // Como hemos rotado el cañón en el eje X (Math.PI/2), necesitamos un vector que apunte en la dirección correcta
+        // Calcular la dirección del disparo correcta teniendo en cuenta la elevación del cañón
         // Usamos un vector que apunta "hacia adelante" en el sistema local del cañón rotado
         const direction = new THREE.Vector3(0, 1, 0).applyQuaternion(this.cannon.getWorldQuaternion(new THREE.Quaternion()));
         
@@ -372,6 +422,7 @@ class Tank {
         // this.playFireSound();
         
         console.log(`Tanque dispara desde (${muzzlePosition.x.toFixed(1)}, ${muzzlePosition.y.toFixed(1)}, ${muzzlePosition.z.toFixed(1)})`);
+        console.log(`Ángulo de elevación del cañón: ${(this.cannonAngle * 180 / Math.PI).toFixed(1)} grados`);
         
         return projectile;
     }

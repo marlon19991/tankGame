@@ -9,6 +9,8 @@ class GameController {
         this.projectiles = [];
         this.obstacles = [];
         this.enemyTanks = []; // Array para almacenar tanques enemigos
+        this.buildings = []; // Array para almacenar edificios
+        this.radar = null; // Radar para mostrar enemigos cercanos
         
         // Estado del juego
         this.score = 0;
@@ -31,11 +33,14 @@ class GameController {
         // Crear barra de vida del jugador
         this.playerHealthBar = new HealthBar();
         
+        // Crear el radar
+        this.radar = new Radar(this);
+        
         // Configurar cámara para seguir al tanque
         this.setupCamera();
         
-        // Crear obstáculos
-        this.createObstacles();
+        // Crear edificios
+        this.createBuildings();
         
         // Crear tanques enemigos
         this.createEnemyTanks();
@@ -48,105 +53,79 @@ class GameController {
     
     setupCamera() {
         // Configurar la cámara para seguir al tanque desde atrás y ligeramente elevada
-        // Aumentar la altura y distancia para el mapa más grande
-        this.cameraOffset = new THREE.Vector3(0, 12, 20);
+        // Definir diferentes offsets para los distintos modos de cámara
+        this.cameraOffsets = [
+            new THREE.Vector3(0, 30, 50),   // Modo 0: Vista normal (alejada)
+            new THREE.Vector3(0, 15, 25),   // Modo 1: Zoom cercano
+            new THREE.Vector3(0, 5, 0)      // Modo 2: Primera persona (desde la torreta)
+        ];
+        this.cameraOffset = this.cameraOffsets[0]; // Iniciar con modo normal
         this.cameraTarget = new THREE.Vector3(0, 0, 0);
     }
     
     createObstacles() {
-        // Crear obstáculos distribuidos por el mapa más grande
-        const obstacleCount = 30; // Más obstáculos para el mapa grande
-        
-        for (let i = 0; i < obstacleCount; i++) {
-            // Posición aleatoria dentro del mapa
-            const angle = Math.random() * Math.PI * 2;
-            const distance = 20 + Math.random() * 80; // Distribuir entre 20 y 100 unidades del centro
-            
-            const x = Math.cos(angle) * distance;
-            const z = Math.sin(angle) * distance;
-            
-            const obstacle = this.createObstacle(x, z);
-            this.obstacles.push(obstacle);
-        }
-        
-        console.log(`Creados ${this.obstacles.length} obstáculos`);
+        // Función vacía - obstáculos eliminados
+        this.obstacles = [];
+        console.log("No se crearán obstáculos");
     }
     
-    createObstacle(x, z) {
-        // Determinar aleatoriamente si es un obstáculo grande o pequeño
-        const isSmall = Math.random() < 0.4; // 40% de probabilidad de ser pequeño
+    createBuildings() {
+        // Crear edificios distribuidos por el mapa
+        const buildingCount = 30;
+        this.buildings = [];
         
-        // Dimensiones basadas en el tamaño
-        const width = isSmall ? 2 : 3;
-        const height = isSmall ? 1 : 3;
-        const depth = isSmall ? 2 : 3;
+        // Definir diferentes tipos de edificios (ancho, alto, profundidad, color)
+        const buildingTypes = [
+            { width: 15, height: 30, depth: 15, color: 0x888888 }, // Edificio alto gris
+            { width: 20, height: 15, depth: 20, color: 0x775544 }, // Edificio ancho marrón
+            { width: 10, height: 25, depth: 10, color: 0x998877 }, // Edificio mediano beige
+            { width: 12, height: 18, depth: 12, color: 0x555555 }, // Edificio mediano gris oscuro
+            { width: 8, height: 12, depth: 8, color: 0xAA9988 }   // Edificio pequeño beige claro
+        ];
         
-        // Obtener la altura del terreno en esta posición
-        const terrainHeight = this.terrain.getHeightAt(x, z);
-        
-        // Crear geometría del obstáculo
-        const geometry = new THREE.BoxGeometry(width, height, depth);
-        
-        // Color basado en el tamaño
-        const color = isSmall ? 0xA0522D : 0x8B4513; // Más claro para los pequeños
-        
-        const material = new THREE.MeshStandardMaterial({
-            color: color,
-            roughness: 0.8
-        });
-        
-        const obstacle = new THREE.Mesh(geometry, material);
-        
-        // Posicionar el obstáculo sobre el terreno con desniveles
-        obstacle.position.set(x, terrainHeight + height/2, z);
-        
-        // Adaptar la rotación del obstáculo a la pendiente del terreno
-        if (!isSmall) { // Solo adaptar los obstáculos grandes a la pendiente
-            // Obtener alturas en puntos cercanos para calcular la pendiente
-            const stepSize = 1.0;
-            const heightX1 = this.terrain.getHeightAt(x - stepSize, z);
-            const heightX2 = this.terrain.getHeightAt(x + stepSize, z);
-            const heightZ1 = this.terrain.getHeightAt(x, z - stepSize);
-            const heightZ2 = this.terrain.getHeightAt(x, z + stepSize);
+        // Crear edificios en diferentes áreas del mapa
+        for (let i = 0; i < buildingCount; i++) {
+            // Distribuir edificios en círculos concéntricos alrededor del centro
+            // pero evitando la zona central donde comienza el jugador
+            const angle = (i / buildingCount) * Math.PI * 2;
+            const ring = Math.floor(i / 10) + 1; // Distribuir en anillos
+            const distance = 100 + ring * 150; // Distancia desde el centro
             
-            // Calcular las pendientes en X y Z
-            const slopeX = (heightX2 - heightX1) / (2 * stepSize);
-            const slopeZ = (heightZ2 - heightZ1) / (2 * stepSize);
+            // Añadir un poco de variación aleatoria a la posición
+            const randomOffset = 30;
+            const x = Math.cos(angle) * distance + (Math.random() - 0.5) * randomOffset;
+            const z = Math.sin(angle) * distance + (Math.random() - 0.5) * randomOffset;
             
-            // Aplicar rotación basada en la pendiente si es significativa
-            if (Math.abs(slopeX) > 0.05 || Math.abs(slopeZ) > 0.05) {
-                obstacle.rotation.x = Math.atan(slopeZ);
-                obstacle.rotation.z = -Math.atan(slopeX);
-            }
-        } else {
-            // Para obstáculos pequeños, añadir una ligera rotación aleatoria
-            obstacle.rotation.y = Math.random() * Math.PI * 2;
+            // Seleccionar un tipo de edificio aleatorio
+            const typeIndex = Math.floor(Math.random() * buildingTypes.length);
+            const type = buildingTypes[typeIndex];
+            
+            // Crear el edificio
+            const building = new Building(
+                this.scene, 
+                x, 
+                z, 
+                type.width, 
+                type.height, 
+                type.depth, 
+                type.color
+            );
+            
+            this.buildings.push(building);
         }
         
-        obstacle.castShadow = true;
-        obstacle.receiveShadow = true;
-        
-        // Añadir física al obstáculo
-        obstacle.userData.physics = {
-            type: 'obstacle',
-            boundingRadius: Math.max(width, depth) / 2, // Radio basado en las dimensiones
-            isSmall: isSmall, // Marcar si es pequeño
-            height: height // Guardar la altura para comprobar si el tanque puede pasar por encima
-        };
-        
-        this.scene.add(obstacle);
-        return obstacle;
+        console.log(`Creados ${this.buildings.length} edificios`);
     }
     
     createEnemyTanks() {
-        // Crear más tanques enemigos distribuidos por el mapa más grande
-        const enemyCount = 8; // Más enemigos para el mapa grande
+        // Crear más tanques enemigos distribuidos por el mapa mucho más grande
+        const enemyCount = 20; // Más enemigos para el mapa gigante
         this.enemyTanks = [];
         
         for (let i = 0; i < enemyCount; i++) {
             // Distribuir los tanques en círculos concéntricos alrededor del centro
             const angle = (i / enemyCount) * Math.PI * 2;
-            const distance = 40 + (i % 3) * 30; // Distribuir en diferentes anillos
+            const distance = 200 + (i % 5) * 150; // Distribuir en diferentes anillos mucho más amplios
             
             const x = Math.cos(angle) * distance;
             const z = Math.sin(angle) * distance;
@@ -173,6 +152,11 @@ class GameController {
             
             // Actualizar la barra de vida del jugador
             this.playerHealthBar.updateHealth(this.playerTank.health);
+            
+            // Actualizar el radar
+            if (this.radar) {
+                this.radar.update();
+            }
         } else if (this.playerTank && !this.playerTank.active) {
             // Si el jugador ha sido destruido, mostrar game over
             this.gameOver = true;
@@ -197,28 +181,64 @@ class GameController {
     updateCamera() {
         if (!this.playerTank) return;
         
+        // Obtener el modo de cámara actual del controlador de entrada
+        const cameraMode = this.inputController.getCameraMode();
+        
+        // Actualizar el offset de la cámara según el modo seleccionado
+        this.cameraOffset = this.cameraOffsets[cameraMode];
+        
         // Obtener la dirección a la que mira el tanque
         const tankDirection = this.playerTank.getDirection();
         
+        // Obtener la dirección de la torreta (para modo primera persona)
+        const turretDirection = this.playerTank.getTurretDirection ? 
+                              this.playerTank.getTurretDirection() : 
+                              tankDirection.clone();
+        
         // Calcular posición de la cámara basada en la posición del tanque
         const tankPos = this.playerTank.getMesh().position;
+        const turretPos = this.playerTank.getTurretPosition ? 
+                         this.playerTank.getTurretPosition() : 
+                         new THREE.Vector3().copy(tankPos).add(new THREE.Vector3(0, 3, 0));
         
-        // Calcular el ángulo de rotación en Y basado en la dirección del tanque
-        const rotationY = Math.atan2(tankDirection.x, tankDirection.z);
+        // Calcular el ángulo de rotación en Y basado en la dirección del tanque o torreta
+        const rotationY = cameraMode === 2 ? 
+                        Math.atan2(turretDirection.x, turretDirection.z) : 
+                        Math.atan2(tankDirection.x, tankDirection.z);
         
-        // Ajustar el offset basado en la dirección del tanque
+        // Ajustar el offset basado en la dirección del tanque o torreta
         const rotatedOffset = this.cameraOffset.clone();
         rotatedOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), rotationY);
         
-        // Suavizar el movimiento de la cámara para evitar cambios bruscos
-        // Calcular la nueva posición de la cámara
-        const targetCameraPosition = new THREE.Vector3().copy(tankPos).add(rotatedOffset);
+        // Calcular la nueva posición de la cámara según el modo
+        let targetCameraPosition;
+        let targetLookAt;
+        
+        if (cameraMode === 2) {
+            // Modo primera persona: cámara en la torreta mirando hacia adelante
+            targetCameraPosition = new THREE.Vector3().copy(turretPos);
+            // Calcular un punto adelante de la torreta para mirar
+            // Invertimos la dirección para que sea consistente con los controles del juego
+            // donde "forward" es realmente "backward" en términos de las teclas
+            targetLookAt = new THREE.Vector3().copy(turretPos).add(
+                new THREE.Vector3(
+                    -turretDirection.x * 100,
+                    0,
+                    -turretDirection.z * 100
+                )
+            );
+        } else {
+            // Modos normal y zoom: cámara detrás del tanque
+            targetCameraPosition = new THREE.Vector3().copy(tankPos).add(rotatedOffset);
+            // La cámara mira ligeramente por encima del tanque
+            targetLookAt = new THREE.Vector3().copy(tankPos).add(new THREE.Vector3(0, 2, 0));
+        }
         
         // Interpolar suavemente entre la posición actual y la nueva posición
         this.camera.position.lerp(targetCameraPosition, 0.1);
         
-        // La cámara mira ligeramente por encima del tanque
-        this.cameraTarget.copy(tankPos).add(new THREE.Vector3(0, 2, 0));
+        // Actualizar el punto al que mira la cámara
+        this.cameraTarget.copy(targetLookAt);
         this.camera.lookAt(this.cameraTarget);
     }
     
@@ -293,8 +313,8 @@ class GameController {
         const totalDisplacement = new THREE.Vector3(0, 0, 0);
         let collisionDetected = false;
         
-        // Combinar obstáculos y rocas en un solo array para procesar
-        const collidableObjects = [...this.obstacles, ...this.rocks];
+        // Usar rocas y edificios para colisiones
+        const collidableObjects = [...this.rocks, ...this.buildings.map(building => building.getMesh())];
         
         // Comprobar colisiones con todos los objetos colisionables
         for (const object of collidableObjects) {
@@ -471,8 +491,8 @@ class GameController {
         // Radio de colisión del tanque
         const tankRadius = 2.2;
         
-        // Comprobar colisiones con obstáculos y rocas
-        const collidableObjects = [...this.obstacles, ...this.rocks];
+        // Comprobar colisiones con rocas y edificios
+        const collidableObjects = [...this.rocks, ...this.buildings.map(building => building.getMesh())];
         
         for (const object of collidableObjects) {
             // Verificar que el objeto tiene propiedades de física
@@ -532,24 +552,60 @@ class GameController {
         if (!projectile.active) return;
         
         const projectilePosition = projectile.mesh.position;
-        const projectileRadius = 0.3; // Aumentar el radio de colisión del proyectil
+        const projectileRadius = 0.5; // Aumentar el radio de colisión del proyectil para mejorar la detección
         
-        // Comprobar colisiones con obstáculos
-        for (const obstacle of this.obstacles) {
-            const obstaclePosition = obstacle.position;
-            const obstacleRadius = obstacle.userData.physics.boundingRadius;
+        // Comprobar colisiones con el terreno (incluyendo elevaciones)
+        if (this.terrain) {
+            // Obtener la altura del terreno en la posición actual del proyectil
+            const terrainHeight = this.terrain.getHeightAt(projectilePosition.x, projectilePosition.z);
             
-            // Calcular distancia
-            const dx = obstaclePosition.x - projectilePosition.x;
-            const dy = obstaclePosition.y - projectilePosition.y;
-            const dz = obstaclePosition.z - projectilePosition.z;
-            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            // Si el proyectil está cerca o por debajo de la superficie del terreno
+            if (projectilePosition.y <= terrainHeight + projectileRadius) {
+                // Colisión con el terreno detectada
+                projectile.hit();
+                
+                // Crear explosión en el punto de impacto, justo sobre la superficie del terreno
+                // Asegurarnos de que la explosión esté ligeramente por encima del terreno para que sea visible
+                const explosionHeight = terrainHeight + 0.1;
+                this.createExplosion(projectilePosition.x, explosionHeight, projectilePosition.z);
+                
+                console.log(`Proyectil impacta con el terreno a altura ${terrainHeight.toFixed(2)}`);
+                return; // Salir después de la colisión
+            }
+        }
+        
+        // Comprobar colisiones con edificios
+        for (const building of this.buildings) {
+            if (!building.active) continue;
             
-            // Si hay colisión
-            if (distance < (projectileRadius + obstacleRadius)) {
+            const buildingMesh = building.getMesh();
+            const buildingPosition = buildingMesh.position;
+            
+            // Obtener dimensiones del edificio desde la geometría
+            const buildingWidth = buildingMesh.userData.physics.width || buildingMesh.userData.physics.boundingRadius * 2;
+            const buildingHeight = buildingMesh.userData.physics.height || buildingMesh.userData.physics.boundingRadius * 2;
+            const buildingDepth = buildingMesh.userData.physics.depth || buildingMesh.userData.physics.boundingRadius * 2;
+            
+            // Calcular los límites del edificio (caja de colisión)
+            const buildingMinX = buildingPosition.x - buildingWidth / 2;
+            const buildingMaxX = buildingPosition.x + buildingWidth / 2;
+            const buildingMinY = buildingPosition.y - buildingHeight / 2;
+            const buildingMaxY = buildingPosition.y + buildingHeight / 2;
+            const buildingMinZ = buildingPosition.z - buildingDepth / 2;
+            const buildingMaxZ = buildingPosition.z + buildingDepth / 2;
+            
+            // Comprobar si el proyectil está dentro o muy cerca de la caja de colisión del edificio
+            if (projectilePosition.x + projectileRadius > buildingMinX && 
+                projectilePosition.x - projectileRadius < buildingMaxX && 
+                projectilePosition.y + projectileRadius > buildingMinY && 
+                projectilePosition.y - projectileRadius < buildingMaxY && 
+                projectilePosition.z + projectileRadius > buildingMinZ && 
+                projectilePosition.z - projectileRadius < buildingMaxZ) {
+                
+                // Colisión detectada con el edificio
                 projectile.hit();
                 this.createExplosion(projectilePosition.x, projectilePosition.y, projectilePosition.z);
-                console.log("Proyectil impacta con obstáculo");
+                console.log("Proyectil impacta con edificio");
                 return; // Salir después de la primera colisión
             }
         }
@@ -677,6 +733,11 @@ class GameController {
         if (this.playerHealthBar) {
             this.playerHealthBar.hide();
         }
+        
+        // Ocultar el radar
+        if (this.radar && this.radar.radarContainer) {
+            this.radar.radarContainer.style.display = 'none';
+        }
     }
     
     gameComplete() {
@@ -713,6 +774,11 @@ class GameController {
         
         // Añadir al DOM
         document.body.appendChild(scoreElement);
+        
+        // Ocultar el radar
+        if (this.radar && this.radar.radarContainer) {
+            this.radar.radarContainer.style.display = 'none';
+        }
         
         // Marcar el juego como completado
         this.gameOver = true;

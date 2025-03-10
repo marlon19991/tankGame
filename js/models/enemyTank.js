@@ -5,10 +5,10 @@ class EnemyTank extends Tank {
         // Propiedades específicas del enemigo
         this.detectionRadius = 50; // Aumentar el radio de detección
         this.fireRadius = 30; // Aumentar el radio de disparo
-        this.patrolRadius = 20; // Aumentar el radio de patrulla
-        this.patrolSpeed = 5; // Aumentar la velocidad de patrulla
-        this.chaseSpeed = 8; // Aumentar la velocidad de persecución
-        this.turnSpeed = 2; // Aumentar la velocidad de giro
+        this.patrolRadius = 40; // Aumentar el radio de patrulla para más movimiento
+        this.patrolSpeed = 7; // Aumentar la velocidad de patrulla
+        this.chaseSpeed = 10; // Aumentar la velocidad de persecución
+        this.turnSpeed = 2.5; // Aumentar la velocidad de giro
         this.fireRate = 1.5; // Disparos por segundo
         
         // Estado del enemigo
@@ -18,6 +18,7 @@ class EnemyTank extends Tank {
         this.lastStateChange = 0; // Tiempo del último cambio de estado
         this.patrolWaitTime = 0; // Tiempo de espera en un punto de patrulla
         this.lastDebugTime = 0; // Para depuración
+        this.isMoving = true; // Asegurar que el tanque siempre esté en movimiento
         
         // Cambiar el color del tanque enemigo a rojo
         this.setColor(0xAA0000);
@@ -119,6 +120,27 @@ class EnemyTank extends Tank {
     update(deltaTime, playerTank, gameController) {
         if (!this.active || this.health <= 0) return;
         
+        // Forzar movimiento constante
+        // Si el tanque ha estado en el mismo lugar por más de 2 segundos, generar un nuevo punto de patrulla
+        if (!this._lastPosition) {
+            this._lastPosition = this.tankGroup.position.clone();
+            this._stationaryTime = 0;
+        } else {
+            const distance = this._lastPosition.distanceTo(this.tankGroup.position);
+            if (distance < 0.5) { // Si apenas se ha movido
+                this._stationaryTime += deltaTime;
+                if (this._stationaryTime > 2) { // Si ha estado quieto por más de 2 segundos
+                    console.log("Tanque enemigo estancado, generando nuevo punto de patrulla");
+                    this.generatePatrolTarget();
+                    this._stationaryTime = 0;
+                }
+            } else {
+                // Se ha movido, reiniciar contador
+                this._stationaryTime = 0;
+                this._lastPosition.copy(this.tankGroup.position);
+            }
+        }
+        
         // Depuración periódica
         const currentTime = Date.now() / 1000;
         if (currentTime - this.lastDebugTime > 5) {
@@ -173,39 +195,73 @@ class EnemyTank extends Tank {
     
     generatePatrolTarget() {
         // Generar un nuevo punto aleatorio dentro del radio de patrulla
+        // Usar un radio mínimo para asegurar que el tanque se mueva una distancia significativa
         const angle = Math.random() * Math.PI * 2;
-        const radius = Math.random() * this.patrolRadius;
-        this.targetPosition = new THREE.Vector3(
+        const minRadius = this.patrolRadius * 0.5; // Radio mínimo mayor para asegurar movimiento más notable
+        const radius = minRadius + Math.random() * (this.patrolRadius - minRadius);
+        
+        // Generar un punto que esté significativamente lejos de la posición actual
+        const currentPos = this.tankGroup.position;
+        let attempts = 0;
+        let foundGoodPoint = false;
+        let newTarget;
+        
+        // Intentar encontrar un punto que esté a una distancia significativa
+        while (!foundGoodPoint && attempts < 5) {
+            const newAngle = angle + (Math.random() - 0.5) * Math.PI * 0.5; // Variar el ángulo un poco
+            const newRadius = minRadius + Math.random() * (this.patrolRadius - minRadius);
+            
+            newTarget = new THREE.Vector3(
+                this.patrolPoint.x + Math.cos(newAngle) * newRadius,
+                0, // La altura se ajustará con adaptToTerrain
+                this.patrolPoint.z + Math.sin(newAngle) * newRadius
+            );
+            
+            // Verificar si el punto está lo suficientemente lejos
+            const distanceToNew = currentPos.distanceTo(newTarget);
+            if (distanceToNew > this.patrolRadius * 0.4) {
+                foundGoodPoint = true;
+            }
+            
+            attempts++;
+        }
+        
+        // Si no encontramos un buen punto, usar el último generado
+        this.targetPosition = foundGoodPoint ? newTarget : new THREE.Vector3(
             this.patrolPoint.x + Math.cos(angle) * radius,
-            0, // La altura se ajustará con adaptToTerrain
+            0,
             this.patrolPoint.z + Math.sin(angle) * radius
         );
+        
+        // Actualizar el punto central de patrulla para que el tanque se mueva por el mapa
+        // Esto hace que el tanque explore gradualmente diferentes áreas
+        this.patrolPoint.x += (Math.random() - 0.5) * 10; // Mayor desplazamiento
+        this.patrolPoint.z += (Math.random() - 0.5) * 10;
         
         console.log(`Nuevo punto de patrulla: (${this.targetPosition.x.toFixed(1)}, ${this.targetPosition.z.toFixed(1)})`);
     }
     
     updatePatrol(deltaTime) {
-        // Si estamos esperando en un punto de patrulla
+        // Eliminar completamente el tiempo de espera para mantener movimiento constante
         if (this.patrolWaitTime > 0) {
-            this.patrolWaitTime -= deltaTime;
-            // Girar lentamente mientras espera
-            this.tankGroup.rotation.y += deltaTime * 0.5;
-            return;
+            this.patrolWaitTime = 0; // Forzar a que no espere
         }
         
-        // Si no tenemos un punto objetivo o hemos llegado al actual
+        // Si no tenemos un punto objetivo o estamos cerca del actual
         const position = this.tankGroup.position;
-        if (!this.targetPosition || position.distanceTo(this.targetPosition) < 1) {
-            // Generar un nuevo punto de patrulla
+        if (!this.targetPosition || position.distanceTo(this.targetPosition) < 2) {
+            // Generar un nuevo punto de patrulla inmediatamente
             this.generatePatrolTarget();
-            
-            // Establecer un tiempo de espera aleatorio
-            this.patrolWaitTime = 1 + Math.random() * 2;
+            // No establecer tiempo de espera
             return;
         }
         
-        // Moverse hacia el punto objetivo
-        this.moveTowards(this.targetPosition, this.patrolSpeed, deltaTime);
+        // Moverse hacia el punto objetivo con velocidad constante
+        // Usar una velocidad ligeramente mayor para asegurar movimiento visible
+        this.moveTowards(this.targetPosition, this.patrolSpeed * 1.2, deltaTime);
+        
+        // Si el tanque no se ha movido significativamente durante un tiempo
+        // (esto se maneja en el método update)
     }
     
     updateChase(deltaTime, playerTank, gameController) {
@@ -270,18 +326,31 @@ class EnemyTank extends Tank {
             .subVectors(targetPosition, this.tankGroup.position)
             .normalize();
         
-        // Girar hacia el objetivo
-        this.turnTowards(targetPosition, deltaTime);
+        // Girar hacia el objetivo más rápidamente
+        this.turnTowards(targetPosition, deltaTime * 1.5);
         
         // Mover en la dirección del tanque
         const tankDirection = this.getDirection();
         const dot = tankDirection.dot(direction);
         
-        // Solo avanzar si estamos mirando aproximadamente hacia el objetivo
-        if (dot > 0.7) {
+        // Siempre moverse, incluso si no está perfectamente alineado
+        if (dot > 0.3) { // Reducido aún más para permitir movimiento casi constante
+            // Velocidad completa cuando está bien alineado
             this.tankGroup.position.x += tankDirection.x * speed * deltaTime;
             this.tankGroup.position.z += tankDirection.z * speed * deltaTime;
+        } else {
+            // Incluso con mala alineación, moverse a velocidad reducida
+            this.tankGroup.position.x += tankDirection.x * speed * 0.5 * deltaTime;
+            this.tankGroup.position.z += tankDirection.z * speed * 0.5 * deltaTime;
+            
+            // Aplicar un pequeño movimiento lateral para evitar obstaculizaciones
+            const perpendicular = new THREE.Vector3(-tankDirection.z, 0, tankDirection.x);
+            this.tankGroup.position.x += perpendicular.x * speed * 0.3 * deltaTime;
+            this.tankGroup.position.z += perpendicular.z * speed * 0.3 * deltaTime;
         }
+        
+        // Registrar que el tanque se ha movido
+        this._lastMoveTime = Date.now() / 1000;
     }
     
     moveAway(targetPosition, speed, deltaTime) {
