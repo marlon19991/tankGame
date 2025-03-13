@@ -4,13 +4,27 @@ class Tank {
         
         // Propiedades físicas
         this.speed = 0;
-        this.maxSpeed = 10;
+        this.maxSpeed = 10; // Será recalculado según la masa
         this.acceleration = 5;
         this.deceleration = 7;
         this.angularSpeed = 0;
-        this.maxAngularSpeed = 2;
+        this.maxAngularSpeed = 2; // Será recalculado según la masa
         this.angularAcceleration = 4;
         this.angularDeceleration = 6;
+        
+        /**
+         * Masa del tanque - Propiedad central que determina:
+         * - Tamaño visual del tanque
+         * - Velocidad de movimiento (inversamente proporcional)
+         * - Capacidad para absorber a otros tanques (directamente proporcional)
+         */
+        this.mass = 20; // Valor base de masa (aumentado de 10 a 20)
+        this.scaleFactor = 1; // Factor de escala inicial
+        this.normalizationFactor = 0.5; // Factor k de normalización para la escala (aumentado de 1/10 a 0.5)
+        this.collisionRadius = 3; // Radio para detección de colisiones
+        
+        // Estado del auto-daño
+        this.lastSelfDamageState = false;
         
         // Propiedades de la torreta
         this.turretAngle = 0;
@@ -37,6 +51,12 @@ class Tank {
         
         // Crear el modelo del tanque
         this.createTankModel(x, y, z);
+        
+        // Aplicar la escala inicial basada en la masa
+        this.updateScale();
+        
+        // Calcular la velocidad inicial basada en la masa
+        this.updateSpeed();
     }
     
     createTankModel(x, y, z) {
@@ -145,6 +165,14 @@ class Tank {
         
         // Comprobar el disparo
         this.checkFiring(inputController, gameController);
+        
+        // Variable para rastrear el estado anterior de la tecla de auto-daño
+        if (!this.lastSelfDamageState && inputController.isSelfDamagePressed()) {
+            // Aplicar daño solo cuando se presiona la tecla (no mientras se mantiene)
+            this.takeDamage(10);
+            console.log("Auto-daño aplicado. Masa actual:", this.mass.toFixed(2), "Velocidad máxima:", this.maxSpeed.toFixed(2));
+        }
+        this.lastSelfDamageState = inputController.isSelfDamagePressed();
         
         // Adaptar el tanque a la superficie del terreno
         if (gameController && gameController.terrain) {
@@ -408,55 +436,188 @@ class Tank {
         if (!this.active) return null;
         
         // Crear un nuevo proyectil
-        // Ahora que hemos trasladado la geometría del cañón, la punta está en (0, 4, 0) en el espacio local del cañón
         const muzzlePosition = new THREE.Vector3(0, 4, 0).applyMatrix4(this.cannon.matrixWorld);
         
         // Calcular la dirección del disparo correcta teniendo en cuenta la elevación del cañón
-        // Usamos un vector que apunta "hacia adelante" en el sistema local del cañón rotado
         const direction = new THREE.Vector3(0, 1, 0).applyQuaternion(this.cannon.getWorldQuaternion(new THREE.Quaternion()));
         
-        // Crear un proyectil con la dirección correcta
-        const projectile = new Projectile(this.scene, muzzlePosition, direction);
+        // Crear un proyectil con la dirección correcta y la masa del tanque
+        const projectile = new Projectile(this.scene, muzzlePosition, direction, this.mass);
         
-        // Reproducir sonido de disparo (opcional)
-        // this.playFireSound();
+        // Identificar el origen del proyectil
+        projectile.sourceId = this instanceof EnemyTank ? 'enemy' : 'player';
+        
+        // Calcular el daño basado en la masa del tanque (más masa = más daño)
+        // Usando una fórmula que da un daño base de 20 cuando la masa es 20
+        projectile.damage = Math.max(5, Math.floor(this.mass));
         
         console.log(`Tanque dispara desde (${muzzlePosition.x.toFixed(1)}, ${muzzlePosition.y.toFixed(1)}, ${muzzlePosition.z.toFixed(1)})`);
         console.log(`Ángulo de elevación del cañón: ${(this.cannonAngle * 180 / Math.PI).toFixed(1)} grados`);
+        console.log(`Masa del tanque: ${this.mass.toFixed(1)}, Tamaño del proyectil: ${Math.sqrt(this.mass / 20) * 0.3}`);
+        console.log(`Origen del proyectil: ${projectile.sourceId}, Daño: ${projectile.damage}`);
         
         return projectile;
     }
     
     takeDamage(amount) {
-        this.health -= amount;
-        console.log("Tanque dañado. Salud restante:", this.health);
+        // Asegurarse de que amount es un número válido
+        const damageAmount = Number(amount) || 20;
         
-        // Efecto visual de daño (parpadeo rojo)
+        // Aplicar el daño
+        this.health = Math.max(0, this.health - damageAmount);
+        console.log(`Tanque dañado con ${damageAmount}. Salud restante: ${this.health}`);
+        
+        // Reducir la masa proporcionalmente al daño recibido (10% del daño)
+        const massReduction = damageAmount * 0.1;
+        this.updateMass(Math.max(1, this.mass - massReduction)); // Mínimo de masa = 1
+        
+        // Efecto visual de daño (parpadeo rojo más intenso)
         this.flashDamage();
         
+        // Si la salud llega a 0, destruir el tanque
         if (this.health <= 0) {
             console.log("¡Tanque destruido!");
             this.active = false;
-            // Aquí se añadiría la lógica de destrucción/reinicio
+            // Crear una explosión grande al ser destruido
+            if (this.scene) {
+                const position = this.tankGroup.position;
+                this.createDestructionEffect(position.x, position.y, position.z);
+            }
         }
     }
     
+    // Método para crear un efecto visual de daño (parpadeo rojo más intenso)
     flashDamage() {
-        // Guardar los colores originales
-        const bodyColor = this.body.material.color.clone();
-        const turretColor = this.turret.material.color.clone();
+        // Crear material rojo brillante para el efecto de daño
+        const damageMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            emissive: 0xff0000,
+            emissiveIntensity: 2.0
+        });
         
-        // Cambiar a color rojo
-        this.body.material.color.setHex(0xff0000);
-        this.turret.material.color.setHex(0xff0000);
-        
-        // Volver al color original después de un breve tiempo
-        setTimeout(() => {
-            if (this.body && this.turret) {
-                this.body.material.color.copy(bodyColor);
-                this.turret.material.color.copy(turretColor);
+        // Guardar los materiales originales y aplicar el material de daño
+        const originalMaterials = [];
+        this.tankGroup.traverse(child => {
+            if (child.isMesh && child.material) {
+                originalMaterials.push({
+                    mesh: child,
+                    material: child.material
+                });
+                child.material = damageMaterial;
             }
-        }, 150);
+        });
+        
+        // Restaurar los materiales originales después de un breve tiempo
+        setTimeout(() => {
+            originalMaterials.forEach(item => {
+                if (item.mesh) {
+                    item.mesh.material = item.material;
+                }
+            });
+            damageMaterial.dispose();
+        }, 150); // Aumentado de 100ms a 150ms para que sea más visible
+    }
+    
+    // Método para crear el efecto de destrucción
+    createDestructionEffect(x, y, z) {
+        // Crear una explosión grande y espectacular
+        const explosionGeometry = new THREE.SphereGeometry(3, 32, 32);
+        const explosionMaterial = new THREE.MeshBasicMaterial({
+            color: 0xff5500,
+            transparent: true,
+            opacity: 1
+        });
+        
+        const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+        explosion.position.set(x, y, z);
+        this.scene.add(explosion);
+        
+        // Añadir luz intensa a la explosión
+        const explosionLight = new THREE.PointLight(0xff5500, 10, 30);
+        explosionLight.position.set(x, y, z);
+        this.scene.add(explosionLight);
+        
+        // Añadir una segunda luz para más efecto
+        const secondaryLight = new THREE.PointLight(0xffff00, 8, 20);
+        secondaryLight.position.set(x, y + 1, z);
+        this.scene.add(secondaryLight);
+        
+        // Crear partículas para simular escombros
+        const particleCount = 30;
+        const particles = [];
+        
+        for (let i = 0; i < particleCount; i++) {
+            const particleGeometry = new THREE.SphereGeometry(0.3 * Math.random() + 0.1, 8, 8);
+            const particleMaterial = new THREE.MeshBasicMaterial({
+                color: Math.random() > 0.5 ? 0xff5500 : 0x333333,
+                transparent: true,
+                opacity: 1
+            });
+            
+            const particle = new THREE.Mesh(particleGeometry, particleMaterial);
+            particle.position.set(x, y, z);
+            
+            // Velocidad y dirección aleatorias para cada partícula
+            particle.velocity = new THREE.Vector3(
+                (Math.random() - 0.5) * 10,
+                Math.random() * 15,
+                (Math.random() - 0.5) * 10
+            );
+            
+            this.scene.add(particle);
+            particles.push(particle);
+        }
+        
+        // Animar la explosión
+        let scale = 1;
+        const animate = () => {
+            // Animar la explosión principal
+            scale += 0.2;
+            explosion.scale.set(scale, scale, scale);
+            explosionMaterial.opacity -= 0.03;
+            explosionLight.intensity *= 0.95;
+            secondaryLight.intensity *= 0.95;
+            
+            // Animar las partículas
+            for (const particle of particles) {
+                // Aplicar gravedad
+                particle.velocity.y -= 0.4;
+                
+                // Actualizar posición
+                particle.position.x += particle.velocity.x * 0.05;
+                particle.position.y += particle.velocity.y * 0.05;
+                particle.position.z += particle.velocity.z * 0.05;
+                
+                // Reducir opacidad
+                particle.material.opacity -= 0.02;
+                
+                // Si la partícula toca el suelo, rebotar con pérdida de energía
+                if (particle.position.y < 0.3) {
+                    particle.position.y = 0.3;
+                    particle.velocity.y = -particle.velocity.y * 0.4; // Rebote con pérdida de energía
+                }
+            }
+            
+            if (explosionMaterial.opacity > 0) {
+                requestAnimationFrame(animate);
+            } else {
+                // Limpiar recursos
+                this.scene.remove(explosion);
+                this.scene.remove(explosionLight);
+                this.scene.remove(secondaryLight);
+                explosionGeometry.dispose();
+                explosionMaterial.dispose();
+                
+                // Limpiar partículas
+                for (const particle of particles) {
+                    this.scene.remove(particle);
+                    particle.geometry.dispose();
+                    particle.material.dispose();
+                }
+            }
+        };
+        
+        animate();
     }
     
     getMesh() {
@@ -495,7 +656,34 @@ class Tank {
         this.angularSpeed *= factor;
     }
     
-    handleCollision() {
+    /**
+     * Absorbe la masa de otro tanque
+     * @param {Tank} otherTank - El tanque cuya masa será absorbida
+     */
+    absorbMass(otherTank) {
+        // Solo absorber si este tanque tiene mayor masa que el otro
+        if (this.mass > otherTank.mass) {
+            // Calcular la cantidad de masa a absorber (50% de la masa del otro tanque)
+            const absorbedMass = otherTank.mass * 0.5;
+            
+            // Actualizar la masa de ambos tanques
+            this.updateMass(this.mass + absorbedMass);
+            otherTank.updateMass(otherTank.mass - absorbedMass);
+            
+            console.log(`Tanque absorbió ${absorbedMass.toFixed(2)} de masa. Nueva masa: ${this.mass.toFixed(2)}`);
+            
+            // Si el otro tanque queda con muy poca masa, podría ser destruido
+            if (otherTank.mass < 1) {
+                otherTank.takeDamage(otherTank.health); // Destruir el tanque
+            }
+            
+            return true; // Absorción exitosa
+        }
+        
+        return false; // No se pudo absorber
+    }
+    
+    handleCollision(otherTank = null) {
         // Registrar el tiempo de la colisión
         const currentTime = Date.now() / 1000; // Tiempo actual en segundos
         this.lastCollisionTime = currentTime;
@@ -503,6 +691,11 @@ class Tank {
         // Establecer un tiempo de enfriamiento para la colisión más largo
         // Esto ayudará a evitar el parpadeo al reducir temporalmente la velocidad
         this.collisionCooldown = 0.3; // 300 ms de enfriamiento
+        
+        // Si se proporciona otro tanque, intentar absorber su masa
+        if (otherTank && otherTank instanceof Tank) {
+            this.absorbMass(otherTank);
+        }
         
         // Reducir la velocidad en colisiones
         if (Math.abs(this.speed) > 2) {
@@ -525,5 +718,165 @@ class Tank {
         if (Math.abs(this.speed) > 5) {
             this.speed = -this.speed * 0.3;
         }
+    }
+    
+    /**
+     * Actualiza la masa del tanque y todas las propiedades relacionadas
+     * @param {number} newMass - Nueva masa del tanque
+     */
+    updateMass(newMass) {
+        // Actualizar el valor de la masa
+        this.mass = newMass;
+        
+        // Actualizar la escala visual
+        this.updateScale();
+        
+        // Actualizar la velocidad según la nueva masa
+        this.updateSpeed();
+        
+        // Actualizar el radio de colisión basado en la masa
+        this.collisionRadius = 2 + (this.mass / 10); // Base de 2 unidades + factor proporcional a la masa
+    }
+    
+    /**
+     * Actualiza la escala visual del tanque basada en la masa
+     * Fórmula: s = k * m^(1/3), donde k es el factor de normalización
+     */
+    updateScale() {
+        // Calcular el nuevo factor de escala basado en la fórmula física
+        this.scaleFactor = this.normalizationFactor * Math.pow(this.mass, 1/3);
+        
+        // Establecer una escala mínima para evitar tanques demasiado pequeños
+        const minScale = 0.8;
+        if (this.scaleFactor < minScale) {
+            this.scaleFactor = minScale;
+        }
+        
+        // Aplicar la escala al modelo del tanque
+        if (this.tankGroup) {
+            this.tankGroup.scale.set(this.scaleFactor, this.scaleFactor, this.scaleFactor);
+            
+            // Actualizar el radio de colisión basado en la escala
+            this.collisionRadius = 3 * this.scaleFactor;
+            
+            // Log para depuración
+            console.log(`Tanque actualizado: Masa=${this.mass.toFixed(2)}, Escala=${this.scaleFactor.toFixed(2)}, Radio=${this.collisionRadius.toFixed(2)}`);
+        }
+    }
+    
+    /**
+     * Actualiza la velocidad del tanque basada en la masa actual
+     * Fórmula: v = v0/m^factor, donde v0 es la velocidad base
+     */
+    updateSpeed() {
+        const baseSpeed = 50; // Velocidad base v0 (aumentada drásticamente de 20 a 50)
+        const baseAngularSpeed = 8; // Velocidad angular base (aumentada de 4 a 8)
+        
+        // Aplicar una fórmula que reduce mucho más el impacto de la masa
+        // Usamos m^0.1 en lugar de m^0.25 para un impacto mínimo
+        this.maxSpeed = baseSpeed / Math.pow(this.mass, 0.1);
+        this.maxAngularSpeed = baseAngularSpeed / Math.pow(this.mass, 0.1);
+        
+        // Aumentar significativamente los límites mínimos
+        const minSpeed = 15.0; // Velocidad mínima permitida (aumentada de 5.0 a 15.0)
+        if (this.maxSpeed < minSpeed) {
+            this.maxSpeed = minSpeed;
+        }
+        
+        // Limitar la velocidad angular mínima
+        const minAngularSpeed = 3.0; // Velocidad angular mínima (aumentada de 1.0 a 3.0)
+        if (this.maxAngularSpeed < minAngularSpeed) {
+            this.maxAngularSpeed = minAngularSpeed;
+        }
+    }
+    
+    // Método para aumentar la masa del tanque al recoger un pellet
+    increaseMass(amount) {
+        // Aumentar la masa
+        const newMass = this.mass + amount;
+        
+        // Actualizar la masa y propiedades relacionadas
+        this.updateMass(newMass);
+        
+        // Efecto visual de crecimiento
+        this.playGrowthEffect(amount);
+        
+        console.log(`Tanque aumentó su masa en ${amount}. Nueva masa: ${this.mass}`);
+        
+        return this.mass;
+    }
+    
+    // Efecto visual al aumentar la masa
+    playGrowthEffect(amount) {
+        // Guardar escala actual
+        const currentScale = this.body.scale.x;
+        
+        // Crear animación de "pulso" al crecer
+        const timeline = gsap.timeline();
+        
+        // Escala ligeramente más grande que la final
+        const overshoot = 0.1 * (amount / 10);
+        
+        timeline.to(this.body.scale, {
+            x: currentScale + overshoot,
+            y: currentScale + overshoot,
+            z: currentScale + overshoot,
+            duration: 0.2,
+            ease: "power2.out"
+        }).to(this.body.scale, {
+            x: currentScale,
+            y: currentScale,
+            z: currentScale,
+            duration: 0.15,
+            ease: "power2.in"
+        });
+        
+        // Efecto de brillo
+        const originalEmissive = this.body.material.emissive.clone();
+        const glowColor = new THREE.Color(0xFFD700); // Color dorado
+        
+        timeline.to(this.body.material.emissive, {
+            r: glowColor.r,
+            g: glowColor.g,
+            b: glowColor.b,
+            duration: 0.2,
+            ease: "power2.out",
+            onComplete: () => {
+                // Restaurar color original
+                this.body.material.emissive.copy(originalEmissive);
+            }
+        }, 0); // Ejecutar en paralelo con la primera animación
+    }
+    
+    /**
+     * Obtiene la posición de la torreta del tanque
+     * @returns {THREE.Vector3} Posición de la torreta
+     */
+    getTurretPosition() {
+        // Crear un vector para la posición de la torreta
+        const turretPosition = new THREE.Vector3();
+        
+        // Obtener la posición mundial de la torreta
+        this.turret.getWorldPosition(turretPosition);
+        
+        return turretPosition;
+    }
+    
+    /**
+     * Obtiene la dirección a la que apunta la torreta
+     * @returns {THREE.Vector3} Dirección normalizada de la torreta
+     */
+    getTurretDirection() {
+        // Vector que apunta hacia adelante en el sistema de coordenadas local de la torreta
+        const forward = new THREE.Vector3(0, 0, 1);
+        
+        // Aplicar la rotación de la torreta
+        const direction = forward.clone();
+        direction.applyQuaternion(this.turret.getWorldQuaternion(new THREE.Quaternion()));
+        
+        // Normalizar el vector
+        direction.normalize();
+        
+        return direction;
     }
 }

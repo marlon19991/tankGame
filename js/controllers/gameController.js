@@ -11,6 +11,19 @@ class GameController {
         this.enemyTanks = []; // Array para almacenar tanques enemigos
         this.buildings = []; // Array para almacenar edificios
         this.radar = null; // Radar para mostrar enemigos cercanos
+        this.pellets = []; // Array para almacenar pellets de masa
+        
+        // Límites para proyectiles para mejorar rendimiento
+        this.maxProjectiles = 50; // Máximo número de proyectiles permitidos simultáneamente
+        this.projectileCount = 0; // Contador de proyectiles activos
+        
+        // Configuración de pellets
+        this.maxPellets = 30; // Máximo número de pellets en el mapa
+        this.minPellets = 15; // Umbral mínimo de pellets en el mapa
+        this.pelletSpawnInterval = 5000; // Intervalo de generación en ms
+        this.lastPelletSpawnTime = 0; // Último tiempo de generación
+        this.pelletRegenerationInterval = 10000; // Intervalo para regenerar pellets hasta el umbral mínimo
+        this.lastPelletRegenerationTime = 0; // Último tiempo de regeneración
         
         // Estado del juego
         this.score = 0;
@@ -18,6 +31,9 @@ class GameController {
         
         // Controlador de entrada
         this.inputController = new InputController();
+        
+        // Sistema de estadísticas
+        this.statsDisplay = new StatsDisplay();
         
         // Inicializar componentes del juego
         this.init();
@@ -42,6 +58,9 @@ class GameController {
         // Crear edificios
         this.createBuildings();
         
+        // Crear pellets iniciales
+        this.createInitialPellets();
+        
         // Crear tanques enemigos
         this.createEnemyTanks();
         
@@ -57,7 +76,7 @@ class GameController {
         this.cameraOffsets = [
             new THREE.Vector3(0, 30, 50),   // Modo 0: Vista normal (alejada)
             new THREE.Vector3(0, 15, 25),   // Modo 1: Zoom cercano
-            new THREE.Vector3(0, 5, 0)      // Modo 2: Primera persona (desde la torreta)
+            new THREE.Vector3(0, 4, 0)      // Modo 2: Primera persona (desde la torreta, más elevada)
         ];
         this.cameraOffset = this.cameraOffsets[0]; // Iniciar con modo normal
         this.cameraTarget = new THREE.Vector3(0, 0, 0);
@@ -130,51 +149,491 @@ class GameController {
             const x = Math.cos(angle) * distance;
             const z = Math.sin(angle) * distance;
             
-            const enemyTank = new EnemyTank(this.scene, x, 1, z);
+            // Asignar diferentes niveles de dificultad a los tanques
+            let difficulty;
+            if (i < 10) {
+                difficulty = 'easy'; // La mitad de los tanques serán fáciles
+            } else if (i < 18) {
+                difficulty = 'normal'; // 8 tanques normales
+            } else {
+                difficulty = 'hard'; // 2 tanques difíciles
+            }
+            
+            const enemyTank = new EnemyTank(this.scene, x, 1, z, difficulty);
             this.enemyTanks.push(enemyTank);
         }
         
         console.log(`Creados ${this.enemyTanks.length} tanques enemigos`);
     }
     
+    // Método para crear pellets iniciales
+    createInitialPellets() {
+        console.log("Generando pellets iniciales...");
+        
+        // Número base de pellets iniciales
+        const numInitialPellets = Math.floor(this.maxPellets / 2);
+        
+        // Generar pellets aleatorios distribuidos por el mapa
+        for (let i = 0; i < numInitialPellets * 0.7; i++) {
+            this.spawnPellet();
+        }
+        
+        // Generar algunos patrones de pellets para hacer el juego más interesante
+        this.generatePelletPatterns();
+        
+        console.log(`Generados ${this.pellets.length} pellets iniciales`);
+    }
+    
+    // Método para generar patrones de pellets
+    generatePelletPatterns() {
+        // Definir los límites del terreno
+        const X_MIN = -this.terrain.width / 2;
+        const X_MAX = this.terrain.width / 2;
+        const Z_MIN = -this.terrain.height / 2;
+        const Z_MAX = this.terrain.height / 2;
+        
+        // Generar un patrón circular de pellets
+        this.generateCirclePattern();
+        
+        // Generar un patrón en línea recta
+        this.generateLinePattern();
+        
+        // Generar un patrón en zigzag
+        this.generateZigzagPattern();
+    }
+    
+    // Método para generar un patrón circular de pellets
+    generateCirclePattern() {
+        // Elegir un punto aleatorio para el centro del círculo
+        const centerX = Math.random() * 800 - 400; // Dentro de ±400 unidades
+        const centerZ = Math.random() * 800 - 400;
+        const radius = 30 + Math.random() * 20; // Radio entre 30 y 50 unidades
+        const numPellets = 8; // Número de pellets en el círculo
+        
+        for (let i = 0; i < numPellets; i++) {
+            // Calcular posición en el círculo
+            const angle = (i / numPellets) * Math.PI * 2;
+            const x = centerX + Math.cos(angle) * radius;
+            const z = centerZ + Math.sin(angle) * radius;
+            
+            // Verificar que la posición sea válida
+            let validPosition = true;
+            
+            // Comprobar edificios y obstáculos
+            for (const building of this.buildings) {
+                if (!building.position) continue;
+                
+                const distance = Math.sqrt(
+                    Math.pow(x - building.position.x, 2) + 
+                    Math.pow(z - building.position.z, 2)
+                );
+                
+                const buildingSize = building.size || 5;
+                if (distance < buildingSize + 5) {
+                    validPosition = false;
+                    break;
+                }
+            }
+            
+            if (validPosition) {
+                for (const obstacle of this.obstacles) {
+                    if (!obstacle.position) continue;
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(x - obstacle.position.x, 2) + 
+                        Math.pow(z - obstacle.position.z, 2)
+                    );
+                    
+                    if (distance < 5) {
+                        validPosition = false;
+                        break;
+                    }
+                }
+            }
+            
+            if (validPosition) {
+                // Obtener altura del terreno
+                const y = this.terrain.getHeightAt(x, z) + 0.5;
+                
+                // Crear pellet con valor de masa 2 (valor medio)
+                const position = new THREE.Vector3(x, y, z);
+                const pellet = new Pellet(this.scene, position, 2);
+                
+                // Añadir a la lista
+                this.pellets.push(pellet);
+            }
+        }
+    }
+    
+    // Método para generar un patrón en línea recta
+    generateLinePattern() {
+        // Elegir un punto de inicio aleatorio
+        const startX = Math.random() * 800 - 400;
+        const startZ = Math.random() * 800 - 400;
+        
+        // Elegir una dirección aleatoria
+        const angle = Math.random() * Math.PI * 2;
+        const dirX = Math.cos(angle);
+        const dirZ = Math.sin(angle);
+        
+        // Longitud de la línea y espaciado entre pellets
+        const length = 60 + Math.random() * 40; // Entre 60 y 100 unidades
+        const spacing = 10; // Espaciado entre pellets
+        
+        // Número de pellets en la línea
+        const numPellets = Math.floor(length / spacing);
+        
+        for (let i = 0; i < numPellets; i++) {
+            // Calcular posición en la línea
+            const x = startX + dirX * i * spacing;
+            const z = startZ + dirZ * i * spacing;
+            
+            // Verificar que la posición sea válida
+            let validPosition = true;
+            
+            // Comprobar edificios y obstáculos (código similar al anterior)
+            for (const building of this.buildings) {
+                if (!building.position) continue;
+                
+                const distance = Math.sqrt(
+                    Math.pow(x - building.position.x, 2) + 
+                    Math.pow(z - building.position.z, 2)
+                );
+                
+                const buildingSize = building.size || 5;
+                if (distance < buildingSize + 5) {
+                    validPosition = false;
+                    break;
+                }
+            }
+            
+            if (validPosition) {
+                for (const obstacle of this.obstacles) {
+                    if (!obstacle.position) continue;
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(x - obstacle.position.x, 2) + 
+                        Math.pow(z - obstacle.position.z, 2)
+                    );
+                    
+                    if (distance < 5) {
+                        validPosition = false;
+                        break;
+                    }
+                }
+            }
+            
+            if (validPosition) {
+                // Obtener altura del terreno
+                const y = this.terrain.getHeightAt(x, z) + 0.5;
+                
+                // Crear pellet con valor de masa 1 (valor bajo)
+                const position = new THREE.Vector3(x, y, z);
+                const pellet = new Pellet(this.scene, position, 1);
+                
+                // Añadir a la lista
+                this.pellets.push(pellet);
+            }
+        }
+    }
+    
+    // Método para generar un patrón en zigzag
+    generateZigzagPattern() {
+        // Elegir un punto de inicio aleatorio
+        const startX = Math.random() * 800 - 400;
+        const startZ = Math.random() * 800 - 400;
+        
+        // Elegir una dirección principal aleatoria
+        const mainAngle = Math.random() * Math.PI * 2;
+        const mainDirX = Math.cos(mainAngle);
+        const mainDirZ = Math.sin(mainAngle);
+        
+        // Dirección perpendicular para el zigzag
+        const perpDirX = -mainDirZ;
+        const perpDirZ = mainDirX;
+        
+        // Parámetros del zigzag
+        const numSegments = 5; // Número de segmentos del zigzag
+        const segmentLength = 20; // Longitud de cada segmento
+        const zigzagWidth = 15; // Amplitud del zigzag
+        const spacing = 5; // Espaciado entre pellets
+        
+        // Número de pellets por segmento
+        const pelletsPerSegment = Math.floor(segmentLength / spacing);
+        
+        for (let segment = 0; segment < numSegments; segment++) {
+            // Alternar dirección del zigzag
+            const zigzagDir = segment % 2 === 0 ? 1 : -1;
+            
+            for (let i = 0; i < pelletsPerSegment; i++) {
+                // Calcular posición en el zigzag
+                const segmentProgress = i / pelletsPerSegment;
+                const x = startX + 
+                          (segment * segmentLength * mainDirX) + 
+                          (i * spacing * mainDirX) + 
+                          (zigzagDir * zigzagWidth * perpDirX * segmentProgress);
+                const z = startZ + 
+                          (segment * segmentLength * mainDirZ) + 
+                          (i * spacing * mainDirZ) + 
+                          (zigzagDir * zigzagWidth * perpDirZ * segmentProgress);
+                
+                // Verificar que la posición sea válida
+                let validPosition = true;
+                
+                // Comprobar edificios y obstáculos (código similar al anterior)
+                for (const building of this.buildings) {
+                    if (!building.position) continue;
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(x - building.position.x, 2) + 
+                        Math.pow(z - building.position.z, 2)
+                    );
+                    
+                    const buildingSize = building.size || 5;
+                    if (distance < buildingSize + 5) {
+                        validPosition = false;
+                        break;
+                    }
+                }
+                
+                if (validPosition) {
+                    for (const obstacle of this.obstacles) {
+                        if (!obstacle.position) continue;
+                        
+                        const distance = Math.sqrt(
+                            Math.pow(x - obstacle.position.x, 2) + 
+                            Math.pow(z - obstacle.position.z, 2)
+                        );
+                        
+                        if (distance < 5) {
+                            validPosition = false;
+                            break;
+                        }
+                    }
+                }
+                
+                if (validPosition) {
+                    // Obtener altura del terreno
+                    const y = this.terrain.getHeightAt(x, z) + 0.5;
+                    
+                    // Crear pellet con valor de masa 3 (valor alto)
+                    const position = new THREE.Vector3(x, y, z);
+                    const pellet = new Pellet(this.scene, position, 3);
+                    
+                    // Añadir a la lista
+                    this.pellets.push(pellet);
+                }
+            }
+        }
+    }
+    
+    // Método para generar un nuevo pellet en una posición aleatoria
+    spawnPellet() {
+        if (this.pellets.length >= this.maxPellets) return;
+        
+        // Definir los límites del terreno
+        const X_MIN = -this.terrain.width / 2;
+        const X_MAX = this.terrain.width / 2;
+        const Z_MIN = -this.terrain.height / 2;
+        const Z_MAX = this.terrain.height / 2;
+        
+        // Margen desde el borde para evitar que los pellets aparezcan fuera del terreno visible
+        const margin = 50;
+        
+        let x, z;
+        let validPosition = false;
+        let attempts = 0;
+        const maxAttempts = 30; // Aumentamos el número de intentos para encontrar una posición válida
+        
+        // Intentar encontrar una posición válida (no dentro de edificios u obstáculos)
+        while (!validPosition && attempts < maxAttempts) {
+            // Generar posición aleatoria con distribución uniforme
+            // x = X_min + (X_max - X_min) * U1
+            // z = Z_min + (Z_max - Z_min) * U2
+            const U1 = Math.random();
+            const U2 = Math.random();
+            
+            x = X_MIN + margin + (X_MAX - X_MIN - 2 * margin) * U1;
+            z = Z_MIN + margin + (Z_MAX - Z_MIN - 2 * margin) * U2;
+            
+            // Verificar que no esté dentro de un edificio u obstáculo
+            validPosition = true;
+            
+            // Comprobar edificios
+            for (const building of this.buildings) {
+                if (!building.position) continue;
+                
+                const distance = Math.sqrt(
+                    Math.pow(x - building.position.x, 2) + 
+                    Math.pow(z - building.position.z, 2)
+                );
+                
+                // Usar el tamaño del edificio o un valor por defecto
+                const buildingSize = building.size || 5;
+                
+                if (distance < buildingSize + 5) { // Aumentamos el margen para evitar pellets muy cerca de edificios
+                    validPosition = false;
+                    break;
+                }
+            }
+            
+            // Comprobar obstáculos
+            if (validPosition) {
+                for (const obstacle of this.obstacles) {
+                    if (!obstacle.position) continue;
+                    
+                    const distance = Math.sqrt(
+                        Math.pow(x - obstacle.position.x, 2) + 
+                        Math.pow(z - obstacle.position.z, 2)
+                    );
+                    
+                    if (distance < 5) { // Aumentamos el margen para evitar pellets muy cerca de obstáculos
+                        validPosition = false;
+                        break;
+                    }
+                }
+            }
+            
+            // Comprobar que no esté demasiado cerca de otros pellets (para evitar agrupaciones)
+            if (validPosition) {
+                for (const pellet of this.pellets) {
+                    const distance = Math.sqrt(
+                        Math.pow(x - pellet.position.x, 2) + 
+                        Math.pow(z - pellet.position.z, 2)
+                    );
+                    
+                    if (distance < 10) { // Mantener una distancia mínima entre pellets
+                        validPosition = false;
+                        break;
+                    }
+                }
+            }
+            
+            attempts++;
+        }
+        
+        if (validPosition) {
+            // Obtener altura del terreno en esa posición
+            const y = this.terrain.getHeightAt(x, z) + 0.5; // Ligeramente por encima del terreno
+            
+            // Crear nuevo pellet con valor de masa aleatorio entre 1 y 3
+            const valorMasa = Math.floor(Math.random() * 3) + 1;
+            const position = new THREE.Vector3(x, y, z);
+            const pellet = new Pellet(this.scene, position, valorMasa);
+            
+            // Añadir a la lista
+            this.pellets.push(pellet);
+            
+            // Log para depuración
+            console.log(`Pellet generado en (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}) con masa ${valorMasa}`);
+        } else {
+            // Si no se pudo encontrar una posición válida después de varios intentos, intentar de nuevo más tarde
+            console.warn("No se pudo encontrar una posición válida para el pellet después de", maxAttempts, "intentos");
+        }
+    }
+    
+    // Método para actualizar los pellets
+    updatePellets(deltaTime) {
+        // Actualizar pellets existentes
+        for (let i = this.pellets.length - 1; i >= 0; i--) {
+            const pellet = this.pellets[i];
+            
+            // Actualizar animación
+            pellet.update(deltaTime);
+            
+            // Comprobar colisión con el tanque del jugador
+            if (pellet.checkCollision(this.playerTank)) {
+                // Recoger el pellet
+                const valorMasa = pellet.collect();
+                
+                // Aumentar la masa del tanque
+                this.playerTank.increaseMass(valorMasa);
+                
+                // Eliminar de la lista
+                this.pellets.splice(i, 1);
+                
+                // Actualizar puntuación
+                this.score += valorMasa * 10;
+                
+                // Efecto de sonido (si está disponible)
+                // this.playCollectSound();
+            }
+        }
+        
+        const currentTime = performance.now();
+        
+        // Generar nuevos pellets periódicamente (hasta el máximo)
+        if (currentTime - this.lastPelletSpawnTime > this.pelletSpawnInterval && 
+            this.pellets.length < this.maxPellets) {
+            this.spawnPellet();
+            this.lastPelletSpawnTime = currentTime;
+        }
+        
+        // Regenerar pellets si estamos por debajo del umbral mínimo
+        if (currentTime - this.lastPelletRegenerationTime > this.pelletRegenerationInterval && 
+            this.pellets.length < this.minPellets) {
+            
+            // Calcular cuántos pellets necesitamos generar para alcanzar el umbral mínimo
+            const pelletsToGenerate = Math.min(
+                this.minPellets - this.pellets.length,  // Pellets necesarios para alcanzar el umbral
+                3  // Máximo de pellets a generar por ciclo (para evitar generación masiva)
+            );
+            
+            console.log(`Regenerando ${pelletsToGenerate} pellets para mantener el umbral mínimo de ${this.minPellets}`);
+            
+            // Generar los pellets necesarios
+            for (let i = 0; i < pelletsToGenerate; i++) {
+                this.spawnPellet();
+            }
+            
+            // Actualizar el tiempo de regeneración
+            this.lastPelletRegenerationTime = currentTime;
+        }
+    }
+    
     update(deltaTime) {
         if (this.gameOver) return;
         
-        // Actualizar entrada del usuario
-        this.inputController.update();
-        
         // Actualizar tanque del jugador
-        if (this.playerTank && this.playerTank.active) {
-            this.playerTank.update(deltaTime, this.inputController, this);
-            
-            // Comprobar colisiones del tanque con obstáculos
-            this.checkTankCollisions();
-            
-            // Actualizar la barra de vida del jugador
-            this.playerHealthBar.updateHealth(this.playerTank.health);
-            
-            // Actualizar el radar
-            if (this.radar) {
-                this.radar.update();
-            }
-        } else if (this.playerTank && !this.playerTank.active) {
-            // Si el jugador ha sido destruido, mostrar game over
-            this.gameOver = true;
-            this.showGameOver();
-        }
+        this.playerTank.update(deltaTime, this.inputController, this);
         
-        // Actualizar tanques enemigos
-        this.updateEnemyTanks(deltaTime);
+        // Actualizar barra de vida
+        this.playerHealthBar.updateHealth(this.playerTank.health);
+        
+        // Actualizar radar
+        this.radar.update(this.playerTank, this.enemyTanks);
+        
+        // Actualizar pellets
+        this.updatePellets(deltaTime);
         
         // Actualizar proyectiles
         this.updateProjectiles(deltaTime);
         
-        // Actualizar posición de la cámara para seguir al tanque
+        // Comprobar colisiones del tanque con obstáculos y edificios
+        this.checkTankCollisions();
+        
+        // Actualizar tanques enemigos
+        this.updateEnemyTanks(deltaTime);
+        
+        // Actualizar cámara
         this.updateCamera();
         
-        // Depuración
-        if (Math.random() < 0.01) { // Aproximadamente cada 100 frames
-            console.log(`Estado del juego: ${this.enemyTanks.length} enemigos, ${this.projectiles.length} proyectiles`);
+        // Comprobar si el jugador ha perdido
+        if (this.playerTank.health <= 0) {
+            this.showGameOver();
+        }
+        
+        // Comprobar si el jugador ha ganado
+        if (this.enemyTanks.length === 0) {
+            this.gameComplete();
+        }
+        
+        // Actualizar estadísticas si están visibles
+        if (this.inputController.shouldShowStats()) {
+            this.statsDisplay.show();
+            this.statsDisplay.update(this, deltaTime);
+        } else {
+            this.statsDisplay.hide();
         }
     }
     
@@ -217,21 +676,38 @@ class GameController {
         if (cameraMode === 2) {
             // Modo primera persona: cámara en la torreta mirando hacia adelante
             targetCameraPosition = new THREE.Vector3().copy(turretPos);
+            
+            // Ajustar la altura de la cámara proporcionalmente al tamaño del tanque
+            // Obtener el factor de escala actual del tanque
+            const tankScale = this.playerTank.scaleFactor;
+            
+            // Calcular la altura adicional basada en el tamaño del tanque
+            // Más grande el tanque, más alta debe estar la cámara para ver por encima del cuerpo
+            const heightAdjustment = 1.5 * tankScale;
+            
+            // Aplicar el ajuste de altura
+            targetCameraPosition.y += heightAdjustment;
+            
             // Calcular un punto adelante de la torreta para mirar
-            // Invertimos la dirección para que sea consistente con los controles del juego
-            // donde "forward" es realmente "backward" en términos de las teclas
+            // Ajustar la distancia de mirada según el tamaño del tanque
+            const lookDistance = 100 + (tankScale - 1) * 50; // Aumentar la distancia con el tamaño
+            
             targetLookAt = new THREE.Vector3().copy(turretPos).add(
                 new THREE.Vector3(
-                    -turretDirection.x * 100,
-                    0,
-                    -turretDirection.z * 100
+                    turretDirection.x * lookDistance,
+                    turretDirection.y * lookDistance - 10, // Ajustar componente vertical
+                    turretDirection.z * lookDistance
                 )
             );
         } else {
             // Modos normal y zoom: cámara detrás del tanque
-            targetCameraPosition = new THREE.Vector3().copy(tankPos).add(rotatedOffset);
+            // Ajustar el offset según el tamaño del tanque
+            const tankScale = this.playerTank.scaleFactor;
+            const adjustedOffset = rotatedOffset.clone().multiplyScalar(1 + (tankScale - 1) * 0.5);
+            
+            targetCameraPosition = new THREE.Vector3().copy(tankPos).add(adjustedOffset);
             // La cámara mira ligeramente por encima del tanque
-            targetLookAt = new THREE.Vector3().copy(tankPos).add(new THREE.Vector3(0, 2, 0));
+            targetLookAt = new THREE.Vector3().copy(tankPos).add(new THREE.Vector3(0, 2 * tankScale, 0));
         }
         
         // Interpolar suavemente entre la posición actual y la nueva posición
@@ -247,52 +723,84 @@ class GameController {
         
         const projectile = this.playerTank.fire();
         if (projectile) {
+            projectile.sourceId = 'player'; // Identificar el proyectil como del jugador
             this.projectiles.push(projectile);
         }
     }
     
     addProjectile(projectile) {
-        if (projectile) {
-            this.projectiles.push(projectile);
+        // Verificar si ya hay demasiados proyectiles activos
+        if (this.projectiles.length >= this.maxProjectiles) {
+            const oldestProjectile = this.projectiles.shift();
+            this.cleanupProjectile(oldestProjectile);
         }
+        
+        // Si el proyectil viene de un tanque enemigo, marcar su origen
+        if (projectile.sourceId === undefined) {
+            projectile.sourceId = 'enemy';
+        }
+        
+        this.projectiles.push(projectile);
+        this.projectileCount++;
+    }
+    
+    // Método para limpiar recursos de un proyectil
+    cleanupProjectile(projectile) {
+        // Asegurarse de que el proyectil está desactivado
+        if (projectile.active) {
+            projectile.deactivate();
+        }
+        
+        // Eliminar el proyectil de la escena si aún no se ha hecho
+        if (projectile.mesh && projectile.mesh.parent) {
+            this.scene.remove(projectile.mesh);
+            projectile.mesh.geometry.dispose();
+            projectile.mesh.material.dispose();
+            projectile.mesh = null;
+        }
+        
+        // Eliminar la estela si aún existe
+        if (projectile.trail && projectile.trail.mesh && projectile.trail.mesh.parent) {
+            this.scene.remove(projectile.trail.mesh);
+            projectile.trail.mesh.geometry.dispose();
+            projectile.trail.material.dispose();
+            projectile.trail = null;
+        }
+        
+        // Eliminar la luz si aún existe
+        if (projectile.light && projectile.light.parent) {
+            this.scene.remove(projectile.light);
+            projectile.light = null;
+        }
+        
+        // Decrementar el contador de proyectiles
+        this.projectileCount--;
     }
     
     updateProjectiles(deltaTime) {
-        // Recorrer el array de proyectiles en orden inverso para poder eliminar elementos
+        // Actualizar cada proyectil
         for (let i = this.projectiles.length - 1; i >= 0; i--) {
             const projectile = this.projectiles[i];
             
-            // Actualizar la posición del proyectil
-            const isAlive = projectile.update(deltaTime);
-            
-            // Comprobar colisiones si el proyectil sigue activo
-            if (isAlive) {
-                this.checkProjectileCollisions(projectile);
-            }
-            
-            // Si el proyectil ya no está activo (por tiempo o colisión), eliminarlo
+            // Si el proyectil ya no está activo, eliminarlo
             if (!projectile.active) {
-                // Asegurarse de que el mesh se elimina de la escena
-                if (projectile.mesh) {
-                    this.scene.remove(projectile.mesh);
-                    
-                    // Liberar recursos
-                    if (projectile.mesh.geometry) {
-                        projectile.mesh.geometry.dispose();
-                    }
-                    
-                    if (projectile.mesh.material) {
-                        if (Array.isArray(projectile.mesh.material)) {
-                            projectile.mesh.material.forEach(material => material.dispose());
-                        } else {
-                            projectile.mesh.material.dispose();
-                        }
-                    }
-                }
-                
-                // Eliminar el proyectil del array
+                this.cleanupProjectile(projectile);
                 this.projectiles.splice(i, 1);
+                continue;
             }
+            
+            // Actualizar el proyectil
+            const isActive = projectile.update(deltaTime);
+            
+            // Si el proyectil ya no está activo después de la actualización, marcarlo para eliminación
+            if (!isActive) {
+                this.cleanupProjectile(projectile);
+                this.projectiles.splice(i, 1);
+                continue;
+            }
+            
+            // Comprobar colisiones
+            this.checkProjectileCollisions(projectile);
         }
     }
     
@@ -550,118 +1058,93 @@ class GameController {
     
     checkProjectileCollisions(projectile) {
         if (!projectile.active) return;
-        
+
         const projectilePosition = projectile.mesh.position;
-        const projectileRadius = 0.5; // Aumentar el radio de colisión del proyectil para mejorar la detección
-        
-        // Comprobar colisiones con el terreno (incluyendo elevaciones)
+        const projectileRadius = projectile.mesh.geometry.parameters.radius || 1.5;
+        const explosionScale = projectileRadius * 3;
+
+        // Comprobar colisiones con el terreno
         if (this.terrain) {
-            // Obtener la altura del terreno en la posición actual del proyectil
             const terrainHeight = this.terrain.getHeightAt(projectilePosition.x, projectilePosition.z);
-            
-            // Si el proyectil está cerca o por debajo de la superficie del terreno
-            if (projectilePosition.y <= terrainHeight + projectileRadius) {
-                // Colisión con el terreno detectada
+            if (projectilePosition.y < terrainHeight) {
+                console.log("Proyectil impacta con el terreno");
+                this.createExplosion(projectilePosition.x, terrainHeight, projectilePosition.z, explosionScale);
                 projectile.hit();
-                
-                // Crear explosión en el punto de impacto, justo sobre la superficie del terreno
-                // Asegurarnos de que la explosión esté ligeramente por encima del terreno para que sea visible
-                const explosionHeight = terrainHeight + 0.1;
-                this.createExplosion(projectilePosition.x, explosionHeight, projectilePosition.z);
-                
-                console.log(`Proyectil impacta con el terreno a altura ${terrainHeight.toFixed(2)}`);
-                return; // Salir después de la colisión
+                return;
             }
         }
         
         // Comprobar colisiones con edificios
         for (const building of this.buildings) {
-            if (!building.active) continue;
+            if (!building.mesh) continue;
             
-            const buildingMesh = building.getMesh();
-            const buildingPosition = buildingMesh.position;
+            const buildingBox = new THREE.Box3().setFromObject(building.mesh);
+            const projectileSphere = new THREE.Sphere(projectilePosition.clone(), projectileRadius);
             
-            // Obtener dimensiones del edificio desde la geometría
-            const buildingWidth = buildingMesh.userData.physics.width || buildingMesh.userData.physics.boundingRadius * 2;
-            const buildingHeight = buildingMesh.userData.physics.height || buildingMesh.userData.physics.boundingRadius * 2;
-            const buildingDepth = buildingMesh.userData.physics.depth || buildingMesh.userData.physics.boundingRadius * 2;
-            
-            // Calcular los límites del edificio (caja de colisión)
-            const buildingMinX = buildingPosition.x - buildingWidth / 2;
-            const buildingMaxX = buildingPosition.x + buildingWidth / 2;
-            const buildingMinY = buildingPosition.y - buildingHeight / 2;
-            const buildingMaxY = buildingPosition.y + buildingHeight / 2;
-            const buildingMinZ = buildingPosition.z - buildingDepth / 2;
-            const buildingMaxZ = buildingPosition.z + buildingDepth / 2;
-            
-            // Comprobar si el proyectil está dentro o muy cerca de la caja de colisión del edificio
-            if (projectilePosition.x + projectileRadius > buildingMinX && 
-                projectilePosition.x - projectileRadius < buildingMaxX && 
-                projectilePosition.y + projectileRadius > buildingMinY && 
-                projectilePosition.y - projectileRadius < buildingMaxY && 
-                projectilePosition.z + projectileRadius > buildingMinZ && 
-                projectilePosition.z - projectileRadius < buildingMaxZ) {
-                
-                // Colisión detectada con el edificio
+            if (buildingBox.intersectsSphere(projectileSphere)) {
+                console.log("Proyectil impacta con un edificio");
+                this.createExplosion(
+                    projectilePosition.x,
+                    projectilePosition.y,
+                    projectilePosition.z,
+                    explosionScale * 1.5
+                );
                 projectile.hit();
-                this.createExplosion(projectilePosition.x, projectilePosition.y, projectilePosition.z);
-                console.log("Proyectil impacta con edificio");
-                return; // Salir después de la primera colisión
+                return;
             }
         }
-        
-        // Comprobar colisiones con tanques enemigos
-        for (const enemyTank of this.enemyTanks) {
-            if (!enemyTank.active) continue;
+
+        // Comprobar colisión con el tanque del jugador solo si el proyectil no es del jugador
+        if (this.playerTank && this.playerTank.active && projectile.sourceId !== 'player') {
+            const playerBox = new THREE.Box3().setFromObject(this.playerTank.getMesh());
+            const projectileSphere = new THREE.Sphere(projectilePosition.clone(), projectileRadius);
             
-            const tankPosition = enemyTank.getMesh().position;
-            const tankRadius = 2.5; // Aumentar el radio de colisión del tanque
-            
-            // Calcular distancia
-            const dx = tankPosition.x - projectilePosition.x;
-            const dy = tankPosition.y - projectilePosition.y;
-            const dz = tankPosition.z - projectilePosition.z;
-            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            
-            // Si hay colisión
-            if (distance < (projectileRadius + tankRadius)) {
+            if (playerBox.intersectsSphere(projectileSphere)) {
+                console.log("¡Impacto directo en el jugador!");
+                this.createExplosion(
+                    projectilePosition.x,
+                    projectilePosition.y,
+                    projectilePosition.z,
+                    explosionScale * 1.8
+                );
+                const damage = projectile.damage || 20;
+                this.playerTank.takeDamage(damage);
                 projectile.hit();
-                this.createExplosion(projectilePosition.x, projectilePosition.y, projectilePosition.z);
-                
-                // Infligir daño al tanque enemigo
-                enemyTank.takeDamage(20);
-                console.log("Proyectil impacta con tanque enemigo. Salud restante:", enemyTank.health);
-                return; // Salir después de la primera colisión
+                return;
             }
         }
-        
-        // Comprobar colisiones con el tanque del jugador
-        if (this.playerTank && this.playerTank.active) {
-            const tankPosition = this.playerTank.getMesh().position;
-            const tankRadius = 2.5; // Aumentar el radio de colisión del tanque
-            
-            // Calcular distancia
-            const dx = tankPosition.x - projectilePosition.x;
-            const dy = tankPosition.y - projectilePosition.y;
-            const dz = tankPosition.z - projectilePosition.z;
-            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            
-            // Si hay colisión
-            if (distance < (projectileRadius + tankRadius)) {
-                projectile.hit();
-                this.createExplosion(projectilePosition.x, projectilePosition.y, projectilePosition.z);
+
+        // Comprobar colisiones con tanques enemigos solo si el proyectil es del jugador
+        if (projectile.sourceId === 'player') {
+            for (const enemyTank of this.enemyTanks) {
+                if (!enemyTank.active) continue;
+
+                const enemyBox = new THREE.Box3().setFromObject(enemyTank.tankGroup);
+                const projectileSphere = new THREE.Sphere(projectilePosition.clone(), projectileRadius);
                 
-                // Infligir daño al tanque del jugador
-                this.playerTank.takeDamage(10);
-                console.log("Proyectil impacta con tanque del jugador. Salud restante:", this.playerTank.health);
-                return; // Salir después de la primera colisión
+                if (enemyBox.intersectsSphere(projectileSphere)) {
+                    console.log("¡Impacto directo en enemigo!");
+                    this.createExplosion(
+                        projectilePosition.x,
+                        projectilePosition.y,
+                        projectilePosition.z,
+                        explosionScale * 1.8
+                    );
+                    const damage = projectile.damage || 20;
+                    enemyTank.takeDamage(damage);
+                    projectile.hit();
+                    return;
+                }
             }
         }
     }
     
-    createExplosion(x, y, z) {
+    createExplosion(x, y, z, size = 1) {
+        // Aumentar el tamaño base de la explosión
+        const baseSize = 1.5; // Aumentado de 0.5 a 1.5
+        
         // Crear una explosión más grande y vistosa
-        const explosionGeometry = new THREE.SphereGeometry(0.5, 16, 16);
+        const explosionGeometry = new THREE.SphereGeometry(baseSize * size, 16, 16);
         const explosionMaterial = new THREE.MeshBasicMaterial({
             color: 0xff9500,
             transparent: true,
@@ -672,36 +1155,43 @@ class GameController {
         explosion.position.set(x, y, z);
         this.scene.add(explosion);
         
-        // Añadir luz a la explosión
-        const explosionLight = new THREE.PointLight(0xff5500, 5, 10);
+        // Añadir luz más intensa a la explosión
+        const explosionLight = new THREE.PointLight(0xff5500, 8, 15 * size); // Intensidad aumentada de 5 a 8, rango de 10 a 15
         explosionLight.position.set(x, y, z);
         this.scene.add(explosionLight);
         
+        // Añadir una segunda luz para más efecto
+        const secondaryLight = new THREE.PointLight(0xffff00, 5, 10 * size);
+        secondaryLight.position.set(x, y, z);
+        this.scene.add(secondaryLight);
+        
         // Animar la explosión
         const startTime = Date.now();
-        const duration = 1000; // duración en milisegundos
-        const maxScale = 5; // tamaño máximo de la explosión
+        const duration = 1200; // duración en milisegundos (aumentada de 1000 a 1200)
+        const maxScale = 4 * size; // Tamaño máximo de la explosión (aumentado de 3 a 4)
         
         const animateExplosion = () => {
             const elapsedTime = Date.now() - startTime;
             const progress = Math.min(elapsedTime / duration, 1);
             
-            // Escalar la explosión
-            const scale = maxScale * progress;
+            // Escalar la explosión con una curva más dinámica
+            const scale = maxScale * Math.sin(progress * Math.PI * 0.5);
             explosion.scale.set(scale, scale, scale);
             
-            // Reducir la opacidad gradualmente
-            explosionMaterial.opacity = 1 - progress;
+            // Reducir la opacidad gradualmente con una curva más suave
+            explosionMaterial.opacity = 1 - (progress * progress);
             
-            // Reducir la intensidad de la luz
-            explosionLight.intensity = 5 * (1 - progress);
+            // Reducir la intensidad de las luces
+            explosionLight.intensity = 8 * (1 - progress);
+            secondaryLight.intensity = 5 * (1 - progress);
             
             if (progress < 1) {
                 requestAnimationFrame(animateExplosion);
             } else {
-                // Eliminar la explosión y la luz cuando termina la animación
+                // Eliminar la explosión y las luces cuando termina la animación
                 this.scene.remove(explosion);
                 this.scene.remove(explosionLight);
+                this.scene.remove(secondaryLight);
                 explosionGeometry.dispose();
                 explosionMaterial.dispose();
             }
@@ -787,4 +1277,16 @@ class GameController {
     setRenderer(renderer) {
         this.renderer = renderer;
     }
+    
+    // Método para limpiar recursos al reiniciar o finalizar el juego
+    cleanup() {
+        // Limpiar pellets
+        for (const pellet of this.pellets) {
+            pellet.dispose();
+        }
+        this.pellets = [];
+        
+        // ... existing cleanup code ...
+    }
 }
+

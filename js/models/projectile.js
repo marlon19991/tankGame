@@ -1,5 +1,5 @@
 class Projectile {
-    constructor(scene, position, direction) {
+    constructor(scene, position, direction, tankMass = 20) {
         this.scene = scene;
         this.position = position.clone();
         this.direction = direction.normalize();
@@ -13,6 +13,12 @@ class Projectile {
         this.initialDelay = 0.02; // Tiempo antes de que el proyectil sea visible
         this.isVisible = false; // Controla si el proyectil es visible
         
+        // Guardar la masa del tanque para calcular el tamaño del proyectil
+        this.tankMass = tankMass;
+        
+        // Calcular el daño basado en la masa del tanque
+        this.damage = Math.round(this.tankMass);
+        
         // Crear el modelo visual (inicialmente invisible)
         this.createProjectileModel();
         
@@ -21,14 +27,17 @@ class Projectile {
     }
     
     createProjectileModel() {
-        // Geometría y material para el proyectil
-        const geometry = new THREE.SphereGeometry(0.3, 12, 12); // Aumentar tamaño y resolución
-        const material = new THREE.MeshStandardMaterial({
+        // Calcular el tamaño del proyectil basado en la masa del tanque
+        // Fórmula: tamaño base (0.3) * factor de escala basado en la masa
+        const massScale = Math.sqrt(this.tankMass / 20); // Raíz cuadrada para que no crezca demasiado rápido
+        const projectileSize = 0.3 * massScale;
+        
+        // Geometría y material para el proyectil - Usar geometría más simple
+        const geometry = new THREE.SphereGeometry(projectileSize, 8, 8);
+        const material = new THREE.MeshBasicMaterial({
             color: 0xffcc00,
             emissive: 0xff8800,
-            emissiveIntensity: 0.8, // Aumentar intensidad
-            roughness: 0.3,
-            metalness: 0.8,
+            emissiveIntensity: 0.5,
             transparent: true,
             opacity: 0 // Inicialmente invisible
         });
@@ -36,38 +45,51 @@ class Projectile {
         // Crear la malla y posicionarla
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.copy(this.position);
-        this.mesh.castShadow = true;
+        this.mesh.castShadow = false; // Desactivar sombras para mejorar rendimiento
+        this.mesh.receiveShadow = false;
         
         // Añadir a la escena
         this.scene.add(this.mesh);
         
-        // Crear la luz pero no añadirla a la escena todavía
-        this.light = new THREE.PointLight(0xff8800, 2, 5); // Aumentar intensidad y rango
-        this.light.position.copy(this.position);
-        // No añadimos la luz a la escena todavía
+        // Luz opcional - Solo activarla si hay pocos proyectiles (lo controlaremos en update)
+        this.light = null; // No crear luz por defecto
         
-        // Crear la estela pero hacerla invisible
-        this.createTrail();
+        // Crear la estela pero hacerla más simple
+        this.createTrail(projectileSize);
     }
     
-    createTrail() {
-        // Crear geometría para la estela
-        const trailGeometry = new THREE.CylinderGeometry(0.1, 0.3, 1.5, 8); // Aumentar tamaño
-        trailGeometry.translate(0, -0.75, 0); // Mover el origen al extremo
+    createTrail(projectileSize) {
+        // Usar una geometría más simple para la estela
+        const geometry = new THREE.BufferGeometry();
+        const vertices = [];
         
-        // Material con transparencia para la estela
-        const trailMaterial = new THREE.MeshBasicMaterial({
-            color: 0xff8800,
+        // Crear menos puntos para la estela (5 en lugar de 10)
+        for (let i = 0; i < 5; i++) {
+            vertices.push(this.position.x, this.position.y, this.position.z);
+        }
+        
+        // Crear el buffer de vértices
+        const positionAttribute = new THREE.Float32BufferAttribute(vertices, 3);
+        geometry.setAttribute('position', positionAttribute);
+        
+        // Material más simple y menos intensivo
+        const material = new THREE.LineBasicMaterial({
+            color: 0xff6600,
             transparent: true,
             opacity: 0 // Inicialmente invisible
         });
         
-        // Crear la malla de la estela
-        this.trail = new THREE.Mesh(trailGeometry, trailMaterial);
-        this.trail.rotation.x = Math.PI / 2; // Rotar para alinear con la dirección
+        // Crear la línea
+        this.trail = {
+            mesh: new THREE.Line(geometry, material),
+            positionAttribute: positionAttribute,
+            maxPoints: 5, // Usar menos puntos
+            updateInterval: 0.05, // Actualizar con menos frecuencia
+            material: material // Guardar referencia al material
+        };
         
-        // Añadir la estela al proyectil
-        this.mesh.add(this.trail);
+        // Añadir a la escena
+        this.scene.add(this.trail.mesh);
     }
     
     update(deltaTime) {
@@ -82,44 +104,26 @@ class Projectile {
             return false;
         }
         
-        // Actualizar posición
-        const moveX = this.direction.x * this.speed * deltaTime;
-        const moveY = this.direction.y * this.speed * deltaTime;
-        const moveZ = this.direction.z * this.speed * deltaTime;
-        
-        this.mesh.position.x += moveX;
-        this.mesh.position.y += moveY;
-        this.mesh.position.z += moveZ;
-        
-        // Hacer visible el proyectil después del retraso inicial y después de moverse
+        // Si el proyectil no está visible pero ha pasado el tiempo de retraso inicial, hacerlo visible
         if (!this.isVisible && this.timeAlive >= this.initialDelay) {
-            // Aplicar un movimiento adicional antes de hacerlo visible
-            // para asegurarnos de que está lejos de la posición inicial
-            this.mesh.position.x += this.direction.x * 2;
-            this.mesh.position.y += this.direction.y * 2;
-            this.mesh.position.z += this.direction.z * 2;
-            
-            // Ahora hacerlo visible
             this.makeVisible();
         }
         
-        // Actualizar la posición de la luz si ya es visible
-        if (this.isVisible && this.light) {
-            this.light.position.copy(this.mesh.position);
-        }
-        
-        // Orientar el proyectil en la dirección del movimiento
-        if (this.direction.length() > 0) {
-            this.mesh.lookAt(
-                this.mesh.position.x + this.direction.x,
-                this.mesh.position.y + this.direction.y,
-                this.mesh.position.z + this.direction.z
-            );
-        }
-        
-        // Actualizar la estela si ya es visible
+        // Calcular nueva posición solo si el proyectil es visible
         if (this.isVisible) {
-            this.updateTrail();
+            // Actualizar posición según la dirección y velocidad
+            this.position.add(this.direction.clone().multiplyScalar(this.speed * deltaTime));
+            this.mesh.position.copy(this.position);
+            
+            // Actualizar la posición de la luz si existe
+            if (this.light) {
+                this.light.position.copy(this.position);
+            }
+            
+            // Actualizar la estela solo cada cierto intervalo para reducir carga
+            if (this.trail) {
+                this.updateTrail();
+            }
         }
         
         return true;
@@ -146,13 +150,39 @@ class Projectile {
     }
     
     updateTrail() {
-        // Actualizar el tamaño y opacidad de la estela basado en la velocidad
-        const trailScaleY = Math.min(2.0, this.speed * 0.05);
-        this.trail.scale.y = trailScaleY;
+        // Actualizar la estela con la posición actual
+        if (!this.trail || !this.trail.positionAttribute) return;
         
-        // Hacer que la estela sea más transparente cuanto más tiempo esté vivo el proyectil
-        const opacity = Math.max(0, 0.7 * (1 - this.timeAlive / this.lifetime));
-        this.trail.material.opacity = opacity;
+        // Desplazar todos los puntos de la estela hacia adelante
+        const positions = this.trail.positionAttribute.array;
+        
+        // Mover cada punto a la posición del punto anterior
+        for (let i = positions.length - 3; i >= 3; i -= 3) {
+            positions[i] = positions[i - 3];
+            positions[i + 1] = positions[i - 2];
+            positions[i + 2] = positions[i - 1];
+        }
+        
+        // El primer punto es la posición actual del proyectil
+        positions[0] = this.position.x;
+        positions[1] = this.position.y;
+        positions[2] = this.position.z;
+        
+        // Marcar el atributo como necesitado de actualización
+        this.trail.positionAttribute.needsUpdate = true;
+        
+        // Actualizar la opacidad según el tiempo de vida
+        const lifeRatio = this.timeAlive / this.lifetime;
+        const opacity = 1.0 - lifeRatio;
+        
+        if (this.trail.material) {
+            this.trail.material.opacity = opacity * 0.7; // Reducir la opacidad general
+            
+            // Si la opacidad es muy baja, hacer invisible la estela
+            if (opacity < 0.1) {
+                this.trail.material.visible = false;
+            }
+        }
     }
     
     hit() {
@@ -171,12 +201,19 @@ class Projectile {
             this.light = null;
         }
         
-        // Eliminar la estela (no es necesario eliminarla de la escena porque está adjunta al mesh)
+        // Eliminar la estela correctamente
         if (this.trail) {
-            this.mesh.remove(this.trail);
-            this.trail.geometry.dispose();
+            this.scene.remove(this.trail.mesh);
+            this.trail.mesh.geometry.dispose();
             this.trail.material.dispose();
             this.trail = null;
+        }
+        
+        // Eliminar el mesh del proyectil
+        if (this.mesh) {
+            this.scene.remove(this.mesh);
+            this.mesh.geometry.dispose();
+            this.mesh.material.dispose();
         }
         
         // No eliminamos el mesh aquí porque se hace en updateProjectiles del GameController

@@ -11,11 +11,16 @@ class InputController {
             cannonUp: false,    // Nueva tecla para elevar el cañón
             cannonDown: false,  // Nueva tecla para bajar el cañón
             fire: false,
-            cameraToggle: false  // Tecla para cambiar la cámara
+            cameraToggle: false,  // Tecla para cambiar la cámara
+            selfDamage: false,    // Nueva tecla para auto-daño
+            statsToggle: false    // Nueva tecla para mostrar estadísticas
         };
         
         // Estado para controlar el cambio de cámara
         this.cameraMode = 0; // 0: vista normal, 1: zoom cercano, 2: primera persona
+        
+        // Estado para las estadísticas
+        this.showStats = false;
         
         // Configuración
         this.setupEventListeners();
@@ -77,11 +82,24 @@ class InputController {
             // Cambio de cámara con la tecla 2
             case 'Digit2':
                 if (isPressed && !this.keys.cameraToggle) {
-                    // Solo cambiamos al presionar la tecla, no al mantenerla
-                    this.cameraMode = (this.cameraMode + 1) % 3; // Rotar entre 0, 1 y 2
+                    this.cameraMode = (this.cameraMode + 1) % 3;
                     console.log(`Modo de cámara cambiado a: ${this.cameraMode}`);
                 }
                 this.keys.cameraToggle = isPressed;
+                break;
+                
+            // Auto-daño con la tecla 3
+            case 'Digit3':
+                this.keys.selfDamage = isPressed;
+                break;
+                
+            // Mostrar/ocultar estadísticas con la tecla 1
+            case 'Digit1':
+                if (isPressed && !this.keys.statsToggle) {
+                    this.showStats = !this.showStats;
+                    console.log(`Estadísticas ${this.showStats ? 'activadas' : 'desactivadas'}`);
+                }
+                this.keys.statsToggle = isPressed;
                 break;
         }
     }
@@ -130,5 +148,15 @@ class InputController {
     // Método para obtener el modo de cámara actual
     getCameraMode() {
         return this.cameraMode;
+    }
+    
+    // Nuevo método para verificar si se presiona la tecla de auto-daño
+    isSelfDamagePressed() {
+        return this.keys.selfDamage;
+    }
+    
+    // Nuevo método para verificar si las estadísticas deben mostrarse
+    shouldShowStats() {
+        return this.showStats;
     }
 }

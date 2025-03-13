@@ -1,15 +1,37 @@
 class EnemyTank extends Tank {
-    constructor(scene, x, y, z) {
+    constructor(scene, x, y, z, difficulty = 'normal') {
         super(scene, x, y, z);
         
-        // Propiedades específicas del enemigo
-        this.detectionRadius = 50; // Aumentar el radio de detección
-        this.fireRadius = 30; // Aumentar el radio de disparo
-        this.patrolRadius = 40; // Aumentar el radio de patrulla para más movimiento
-        this.patrolSpeed = 7; // Aumentar la velocidad de patrulla
-        this.chaseSpeed = 10; // Aumentar la velocidad de persecución
-        this.turnSpeed = 2.5; // Aumentar la velocidad de giro
-        this.fireRate = 1.5; // Disparos por segundo
+        // Establecer la masa inicial del tanque enemigo según su dificultad
+        switch(difficulty) {
+            case 'easy':
+                this.mass = 10; // Enemigos fáciles (aumentado de 3 a 10)
+                break;
+            case 'normal':
+                this.mass = 15; // Masa estándar para enemigos normales (aumentado de 5 a 15)
+                break;
+            case 'hard':
+                this.mass = 20; // Enemigos difíciles (aumentado de 8 a 20)
+                break;
+            case 'boss':
+                this.mass = 35; // Jefes (aumentado de 15 a 35)
+                break;
+            default:
+                this.mass = 15; // Valor por defecto (aumentado de 5 a 15)
+        }
+        
+        // Velocidades base que serán ajustadas según la masa
+        this.baseDetectionRadius = 120; // Aumentado aún más para detectar al jugador desde lejos
+        this.baseFireRadius = 100; // Aumentado para que los enemigos disparen desde mayor distancia
+        this.basePatrolRadius = 90;
+        this.basePatrolSpeed = 15; // Reducido de 30 a 15 para que sean más lentos
+        this.baseChaseSpeed = 20; // Reducido de 40 a 20 para que sean más lentos
+        this.baseTurnSpeed = 3.0; // Reducido de 6.0 a 3.0 para que giren más lento
+        this.fireRate = 2.0; // Reducido de 3.0 a 2.0 disparos por segundo
+        
+        // Actualizar la escala y velocidad según la masa inicial
+        this.updateScale();
+        this.updateEnemySpeed();
         
         // Estado del enemigo
         this.state = 'patrol'; // patrol, chase, attack
@@ -86,13 +108,17 @@ class EnemyTank extends Tank {
             this.healthBarFill.style.backgroundColor = '#ff0000'; // Rojo
         }
         
+        // Ajustar el tamaño de la barra de vida según la escala del tanque
+        const barWidth = 50 * this.scaleFactor;
+        this.healthBarContainer.style.width = `${barWidth}px`;
+        
         // Posicionar la barra de vida sobre el tanque en la pantalla
         if (this.tankGroup) {
             // Crear un vector para la posición del tanque
             const position = new THREE.Vector3();
             // Obtener la posición del tanque y ajustarla para que esté sobre él
             position.setFromMatrixPosition(this.tankGroup.matrixWorld);
-            position.y += 3; // Ajustar la altura
+            position.y += 3 * this.scaleFactor; // Ajustar la altura según la escala
             
             // Proyectar la posición 3D a coordenadas 2D de la pantalla
             const screenPosition = position.clone();
@@ -129,7 +155,7 @@ class EnemyTank extends Tank {
             const distance = this._lastPosition.distanceTo(this.tankGroup.position);
             if (distance < 0.5) { // Si apenas se ha movido
                 this._stationaryTime += deltaTime;
-                if (this._stationaryTime > 2) { // Si ha estado quieto por más de 2 segundos
+                if (this._stationaryTime > 1) { // Reducido de 2 a 1 segundo para ser más reactivo
                     console.log("Tanque enemigo estancado, generando nuevo punto de patrulla");
                     this.generatePatrolTarget();
                     this._stationaryTime = 0;
@@ -153,12 +179,13 @@ class EnemyTank extends Tank {
             const distanceToPlayer = this.tankGroup.position.distanceTo(playerTank.getMesh().position);
             
             // Cambiar de estado según la distancia al jugador
-            if (distanceToPlayer < this.fireRadius) {
+            // Asegurarse de que los tanques ataquen cuando estén cerca
+            if (distanceToPlayer < this.fireRadius * 0.9) { // Reducido para que entren en modo ataque más fácilmente
                 if (this.state !== 'attack') {
                     console.log("Tanque enemigo cambia a modo ATAQUE");
                     this.state = 'attack';
                 }
-            } else if (distanceToPlayer < this.detectionRadius) {
+            } else if (distanceToPlayer < this.detectionRadius) { // Sin multiplicador para que persigan cuando detecten
                 if (this.state !== 'chase') {
                     console.log("Tanque enemigo cambia a modo PERSECUCIÓN");
                     this.state = 'chase';
@@ -267,16 +294,42 @@ class EnemyTank extends Tank {
     updateChase(deltaTime, playerTank, gameController) {
         if (!playerTank || !gameController) return;
         
-        // Perseguir al jugador
+        // Perseguir al jugador con velocidad reducida
         const playerPosition = playerTank.getMesh().position;
-        this.moveTowards(playerPosition, this.chaseSpeed, deltaTime);
         
-        // Apuntar la torreta hacia el jugador mientras persigue
-        this.aimAt(playerPosition, deltaTime);
+        // Comportamiento modificado: acercarse al jugador para atacar en vez de solo perseguir
+        const distanceToPlayer = this.tankGroup.position.distanceTo(playerPosition);
         
-        // Disparar ocasionalmente mientras persigue
+        // Si está a buena distancia, moverse lateralmente para esquivar y atacar
+        if (distanceToPlayer < this.fireRadius * 0.8) {
+            // Crear un punto de movimiento perpendicular a la dirección jugador->enemigo
+            const dirToPlayer = new THREE.Vector3().subVectors(this.tankGroup.position, playerPosition).normalize();
+            // Vector perpendicular (rotar 90 grados)
+            const perpendicular = new THREE.Vector3(-dirToPlayer.z, 0, dirToPlayer.x);
+            // Alternar dirección lateral cada cierto tiempo para movimiento zigzag
+            const currentTime = Math.floor(Date.now() / 2000); // Cambiar cada 2 segundos
+            if (currentTime % 2 === 0) {
+                perpendicular.multiplyScalar(-1);
+            }
+            
+            // Punto objetivo para movimiento lateral
+            const lateralTarget = new THREE.Vector3().addVectors(
+                this.tankGroup.position, 
+                perpendicular.multiplyScalar(10)
+            );
+            
+            this.moveTowards(lateralTarget, this.patrolSpeed, deltaTime);
+        } else {
+            // Perseguir al jugador si está lejos
+            this.moveTowards(playerPosition, this.chaseSpeed, deltaTime);
+        }
+        
+        // Apuntar la torreta hacia el jugador con mayor precisión
+        this.aimAt(playerPosition, deltaTime * 2.5);
+        
+        // Disparar mientras persigue
         const currentTime = Date.now() / 1000;
-        if (currentTime - this.lastFireTime > 2) { // Disparar cada 2 segundos durante la persecución
+        if (currentTime - this.lastFireTime > 1.5) { // Disparar cada 1.5 segundos durante la persecución
             this.lastFireTime = currentTime;
             const projectile = this.fire();
             if (projectile && gameController) {
@@ -292,21 +345,44 @@ class EnemyTank extends Tank {
         // Obtener la posición del jugador
         const playerPosition = playerTank.getMesh().position;
         
-        // Moverse hacia el jugador pero mantener distancia
+        // Comportamiento más agresivo: mantener distancia óptima para disparar
         const distanceToPlayer = this.tankGroup.position.distanceTo(playerPosition);
-        if (distanceToPlayer < this.fireRadius * 0.6) {
-            // Retroceder si está demasiado cerca
-            this.moveAway(playerPosition, this.patrolSpeed * 1.2, deltaTime);
-        } else if (distanceToPlayer > this.fireRadius * 0.8) {
-            // Acercarse si está demasiado lejos
-            this.moveTowards(playerPosition, this.patrolSpeed * 1.2, deltaTime);
+        
+        // Comportamiento modificado: mantener distancia óptima en vez de huir
+        if (distanceToPlayer > this.fireRadius * 0.7) {
+            // Acercarse al jugador si está demasiado lejos
+            this.moveTowards(playerPosition, this.chaseSpeed * 0.8, deltaTime);
+        } else if (distanceToPlayer < this.fireRadius * 0.4) {
+            // Alejarse si está demasiado cerca
+            const dirFromPlayer = new THREE.Vector3().subVectors(this.tankGroup.position, playerPosition).normalize();
+            const retreatTarget = new THREE.Vector3().addVectors(
+                this.tankGroup.position,
+                dirFromPlayer.multiplyScalar(10)
+            );
+            this.moveTowards(retreatTarget, this.patrolSpeed, deltaTime);
         } else {
-            // Mantener la posición y girar para apuntar al jugador
-            this.turnTowards(playerPosition, deltaTime * 1.5);
+            // Si está a buena distancia, moverse lateralmente para esquivar
+            // Crear un punto de movimiento perpendicular a la dirección jugador->enemigo
+            const dirToPlayer = new THREE.Vector3().subVectors(this.tankGroup.position, playerPosition).normalize();
+            // Vector perpendicular (rotar 90 grados)
+            const perpendicular = new THREE.Vector3(-dirToPlayer.z, 0, dirToPlayer.x);
+            // Alternar dirección lateral cada cierto tiempo para movimiento zigzag
+            const currentTime = Math.floor(Date.now() / 2000); // Cambiar cada 2 segundos
+            if (currentTime % 2 === 0) {
+                perpendicular.multiplyScalar(-1);
+            }
+            
+            // Punto objetivo para movimiento lateral
+            const lateralTarget = new THREE.Vector3().addVectors(
+                this.tankGroup.position, 
+                perpendicular.multiplyScalar(10)
+            );
+            
+            this.moveTowards(lateralTarget, this.patrolSpeed * 0.7, deltaTime);
         }
         
-        // Apuntar la torreta hacia el jugador
-        this.aimAt(playerPosition, deltaTime * 2);
+        // Apuntar la torreta hacia el jugador con mayor precisión
+        this.aimAt(playerPosition, deltaTime * 3);
         
         // Disparar con mayor frecuencia en modo ataque
         const currentTime = Date.now() / 1000;
@@ -429,6 +505,7 @@ class EnemyTank extends Tank {
     }
     
     takeDamage(amount) {
+        // Llamar al método de la clase padre que ya actualiza la masa
         super.takeDamage(amount);
         
         // Actualizar la barra de vida inmediatamente
@@ -443,6 +520,12 @@ class EnemyTank extends Tank {
                 this.healthBarFill.style.backgroundColor = '#ffcc00'; // Amarillo
             } else {
                 this.healthBarFill.style.backgroundColor = '#ff0000'; // Rojo
+            }
+            
+            // Ajustar el tamaño de la barra de vida según la escala del tanque
+            if (this.healthBarContainer) {
+                const barWidth = 50 * this.scaleFactor; // Ajustar el ancho según la escala
+                this.healthBarContainer.style.width = `${barWidth}px`;
             }
         }
         
@@ -505,5 +588,44 @@ class EnemyTank extends Tank {
             this.rightTrack.geometry.dispose();
             this.rightTrack.material.dispose();
         }
+    }
+    
+    /**
+     * Actualiza las velocidades del enemigo basadas en la masa actual
+     * Aplica la fórmula v = v0/(m^0.1) a las velocidades específicas del enemigo
+     */
+    updateEnemySpeed() {
+        // Aplicar la fórmula de velocidad basada en la masa
+        // Usamos m^0.1 en lugar de m^0.25 para un impacto mínimo
+        const massFactor = 1 / Math.pow(this.mass, 0.1);
+        
+        // Actualizar velocidades y radios según la masa
+        this.detectionRadius = this.baseDetectionRadius * massFactor;
+        this.fireRadius = this.baseFireRadius * massFactor;
+        this.patrolRadius = this.basePatrolRadius * massFactor;
+        this.patrolSpeed = this.basePatrolSpeed * massFactor;
+        this.chaseSpeed = this.baseChaseSpeed * massFactor;
+        this.turnSpeed = this.baseTurnSpeed * massFactor;
+        
+        // Establecer límites mínimos más bajos para que los tanques sean más lentos
+        const minSpeed = 8.0; // Velocidad mínima (reducida de 15.0 a 8.0)
+        if (this.patrolSpeed < minSpeed) this.patrolSpeed = minSpeed;
+        if (this.chaseSpeed < minSpeed) this.chaseSpeed = minSpeed;
+        if (this.turnSpeed < 1.5) this.turnSpeed = 1.5; // Reducido de 3.0 a 1.5
+        
+        // Los radios no deberían ser demasiado pequeños
+        const minRadius = 40; // Mantener el radio de detección
+        if (this.detectionRadius < minRadius) this.detectionRadius = minRadius;
+        if (this.fireRadius < minRadius/1.5) this.fireRadius = minRadius/1.5;
+        if (this.patrolRadius < minRadius) this.patrolRadius = minRadius;
+    }
+    
+    // Sobrescribir el método updateMass para actualizar también las velocidades del enemigo
+    updateMass(newMass) {
+        // Llamar al método de la clase padre
+        super.updateMass(newMass);
+        
+        // Actualizar las velocidades específicas del enemigo
+        this.updateEnemySpeed();
     }
 } 

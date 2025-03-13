@@ -2,7 +2,7 @@ class Radar {
     constructor(gameController) {
         this.gameController = gameController;
         this.radarSize = 150; // Tamaño del radar en píxeles
-        this.radarRange = 100; // Rango del radar en unidades del juego
+        this.radarRange = 300; // Aumentado el rango del radar para ver enemigos más lejanos
         this.createRadarElement();
     }
 
@@ -94,15 +94,25 @@ class Radar {
     }
     
     createNorthIndicator() {
-        // Crear un contenedor para el indicador del norte que estará fuera del radar
+        // Crear un contenedor circular alrededor del radar para el indicador del norte
+        const northIndicatorContainer = document.createElement('div');
+        northIndicatorContainer.style.position = 'absolute';
+        northIndicatorContainer.style.top = '0';
+        northIndicatorContainer.style.left = '0';
+        northIndicatorContainer.style.width = '100%';
+        northIndicatorContainer.style.height = '100%';
+        northIndicatorContainer.style.borderRadius = '50%';
+        northIndicatorContainer.style.pointerEvents = 'none';
+        northIndicatorContainer.style.zIndex = '1001';
+        
+        // Crear el indicador visual del norte (triángulo rojo)
         const northContainer = document.createElement('div');
         northContainer.style.position = 'absolute';
         northContainer.style.top = '-25px'; // Posicionarlo encima del radar
         northContainer.style.left = '50%';
-        northContainer.style.transform = 'translateX(-50%)';
         northContainer.style.width = '20px';
         northContainer.style.height = '20px';
-        northContainer.style.zIndex = '1001';
+        northContainer.style.transformOrigin = 'bottom center'; // Punto de origen para la rotación
         
         // Crear el indicador visual del norte (triángulo rojo)
         const northTriangle = document.createElement('div');
@@ -134,37 +144,53 @@ class Radar {
         northContainer.appendChild(northLabel);
         
         // Añadir el contenedor al radar
-        this.radarContainer.appendChild(northContainer);
+        northIndicatorContainer.appendChild(northContainer);
+        this.radarContainer.appendChild(northIndicatorContainer);
         
         // Guardar referencia para poder actualizarlo
         this.northContainer = northContainer;
     }
     
-    update() {
-        if (!this.gameController || !this.gameController.playerTank) return;
+    update(playerTank, enemyTanks) {
+        if (!playerTank) return;
         
         // Limpiar el canvas
         this.ctx.clearRect(0, 0, this.radarSize, this.radarSize);
         
         // Obtener la posición y rotación del jugador
-        const playerPosition = this.gameController.playerTank.tankGroup.position;
-        const playerRotation = this.gameController.playerTank.tankGroup.rotation.y;
+        const playerPosition = playerTank.tankGroup.position;
+        const playerRotation = playerTank.tankGroup.rotation.y;
         
         // Actualizar la posición del indicador del norte basado en la rotación del jugador
         // El norte siempre debe estar en la dirección correcta respecto a la rotación del jugador
         if (this.northContainer) {
-            // Calcular la posición del norte en el borde del radar
-            const northAngle = -playerRotation; // Negativo porque queremos compensar la rotación del jugador
+            // Calcular el ángulo de rotación para el indicador del norte
+            // Negativo porque queremos compensar la rotación del jugador
+            const northAngle = -playerRotation;
             
-            // El norte siempre está en la parte superior, solo ajustamos su posición horizontal
-            // basada en la rotación del jugador para que siempre apunte al norte real
-            const northX = 50 + Math.sin(northAngle) * 50; // 50% + desplazamiento basado en rotación
+            // Calcular la posición en coordenadas polares (rotación completa 360°)
+            const radius = this.radarSize / 2; // Radio del radar
             
-            // Limitar la posición para que no se salga demasiado del radar
-            const clampedX = Math.max(10, Math.min(90, northX));
+            // Calcular las coordenadas X e Y basadas en el ángulo
+            const x = radius + Math.sin(northAngle) * radius;
+            const y = radius - Math.cos(northAngle) * radius;
             
-            // Aplicar la nueva posición
-            this.northContainer.style.left = `${clampedX}%`;
+            // Convertir a porcentajes para posicionamiento CSS
+            const xPercent = (x / this.radarSize) * 100;
+            const yPercent = (y / this.radarSize) * 100;
+            
+            // Aplicar transformación para posicionar y rotar el indicador
+            this.northContainer.style.top = `${yPercent}%`;
+            this.northContainer.style.left = `${xPercent}%`;
+            this.northContainer.style.transform = `translate(-50%, -100%) rotate(${northAngle}rad)`;
+            
+            // Ajustar la visibilidad basada en la posición
+            // Esto asegura que el indicador sea visible incluso cuando está en la parte inferior del radar
+            if (yPercent > 75) {
+                // Si está en la parte inferior, ajustar el estilo para que sea visible
+                this.northContainer.style.top = `${yPercent + 5}%`;
+                this.northContainer.style.transform = `translate(-50%, 0%) rotate(${northAngle + Math.PI}rad)`;
+            }
         }
         
         // Dibujar el punto del jugador en el centro
@@ -172,6 +198,53 @@ class Radar {
         this.ctx.beginPath();
         this.ctx.arc(this.radarSize / 2, this.radarSize / 2, 4, 0, Math.PI * 2);
         this.ctx.fill();
+        
+        // Dibujar los enemigos en el radar
+        if (enemyTanks && enemyTanks.length > 0) {
+            this.drawEnemies(playerPosition, playerRotation, enemyTanks);
+        }
+    }
+
+    // Método para dibujar los enemigos en el radar
+    drawEnemies(playerPosition, playerRotation, enemyTanks) {
+        enemyTanks.forEach(enemyTank => {
+            if (!enemyTank.active) return;
+            
+            // Calcular la posición relativa al jugador
+            const dx = enemyTank.tankGroup.position.x - playerPosition.x;
+            const dz = enemyTank.tankGroup.position.z - playerPosition.z;
+            
+            // Calcular la distancia
+            const distance = Math.sqrt(dx * dx + dz * dz);
+            
+            // Solo mostrar enemigos dentro del rango del radar
+            if (distance <= this.radarRange) {
+                // Calcular la posición en el radar (rotar según la orientación del jugador)
+                const angle = Math.atan2(dz, dx) - playerRotation;
+                const radarX = this.radarSize / 2 + Math.cos(angle) * (distance / this.radarRange) * (this.radarSize / 2);
+                const radarY = this.radarSize / 2 + Math.sin(angle) * (distance / this.radarRange) * (this.radarSize / 2);
+                
+                // Dibujar el punto del enemigo con un efecto pulsante
+                const pulseSize = 3 + Math.sin(Date.now() * 0.01) * 1; // Efecto pulsante
+                
+                // Dibujar un círculo exterior para mejor visibilidad
+                this.ctx.fillStyle = 'rgba(255, 50, 50, 0.4)'; // Rojo semi-transparente
+                this.ctx.beginPath();
+                this.ctx.arc(radarX, radarY, pulseSize + 2, 0, Math.PI * 2);
+                this.ctx.fill();
+                
+                // Dibujar el punto central del enemigo
+                this.ctx.fillStyle = 'rgba(255, 50, 50, 0.9)'; // Rojo para los enemigos
+                this.ctx.beginPath();
+                this.ctx.arc(radarX, radarY, pulseSize, 0, Math.PI * 2);
+                this.ctx.fill();
+                
+                // Añadir un borde para mejor contraste
+                this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+                this.ctx.lineWidth = 0.5;
+                this.ctx.stroke();
+            }
+        });
         
         // Dibujar una pequeña flecha para indicar la dirección del jugador
         this.ctx.save();
@@ -185,59 +258,5 @@ class Radar {
         this.ctx.fillStyle = 'rgba(100, 200, 255, 0.9)';
         this.ctx.fill();
         this.ctx.restore();
-        
-        // Dibujar los tanques enemigos
-        if (this.gameController.enemyTanks) {
-            this.gameController.enemyTanks.forEach(enemyTank => {
-                if (!enemyTank.active) return;
-                
-                // Calcular la posición relativa al jugador
-                const dx = enemyTank.tankGroup.position.x - playerPosition.x;
-                const dz = enemyTank.tankGroup.position.z - playerPosition.z;
-                
-                // Calcular la distancia
-                const distance = Math.sqrt(dx * dx + dz * dz);
-                
-                // Solo mostrar enemigos dentro del rango del radar
-                if (distance <= this.radarRange) {
-                    // Calcular la posición en el radar (rotar según la orientación del jugador)
-                    const angle = Math.atan2(dz, dx) - playerRotation;
-                    const radarX = this.radarSize / 2 + Math.cos(angle) * (distance / this.radarRange) * (this.radarSize / 2);
-                    const radarY = this.radarSize / 2 + Math.sin(angle) * (distance / this.radarRange) * (this.radarSize / 2);
-                    
-                    // Dibujar el punto del enemigo
-                    this.ctx.fillStyle = 'rgba(255, 50, 50, 0.9)'; // Rojo para los enemigos
-                    this.ctx.beginPath();
-                    this.ctx.arc(radarX, radarY, 3, 0, Math.PI * 2);
-                    this.ctx.fill();
-                }
-            });
-        }
-        
-        // Dibujar los edificios
-        if (this.gameController.buildings) {
-            this.gameController.buildings.forEach(building => {
-                // Calcular la posición relativa al jugador
-                const dx = building.mesh.position.x - playerPosition.x;
-                const dz = building.mesh.position.z - playerPosition.z;
-                
-                // Calcular la distancia
-                const distance = Math.sqrt(dx * dx + dz * dz);
-                
-                // Solo mostrar edificios dentro del rango del radar
-                if (distance <= this.radarRange) {
-                    // Calcular la posición en el radar (rotar según la orientación del jugador)
-                    const angle = Math.atan2(dz, dx) - playerRotation;
-                    const radarX = this.radarSize / 2 + Math.cos(angle) * (distance / this.radarRange) * (this.radarSize / 2);
-                    const radarY = this.radarSize / 2 + Math.sin(angle) * (distance / this.radarRange) * (this.radarSize / 2);
-                    
-                    // Dibujar el punto del edificio
-                    this.ctx.fillStyle = 'rgba(200, 200, 200, 0.7)'; // Gris para los edificios
-                    this.ctx.beginPath();
-                    this.ctx.rect(radarX - 2, radarY - 2, 4, 4);
-                    this.ctx.fill();
-                }
-            });
-        }
     }
 }
