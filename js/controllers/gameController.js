@@ -635,6 +635,15 @@ class GameController {
         } else {
             this.statsDisplay.hide();
         }
+        
+        // Actualizar el estado de la embestida en la UI
+        if (this.ui) {
+            this.ui.updateRammingStatus(
+                this.playerTank.isRamming,
+                this.playerTank.rammingDuration,
+                this.playerTank.rammingCooldown
+            );
+        }
     }
     
     updateCamera() {
@@ -811,8 +820,8 @@ class GameController {
         const tankMesh = this.playerTank.getMesh();
         const tankPosition = tankMesh.position.clone();
         
-        // Aumentar ligeramente el radio de colisión del tanque para evitar penetraciones
-        const tankRadius = 2.2; // Radio de colisión del tanque aumentado
+        // Usar el radio de colisión basado en la masa del tanque
+        const tankRadius = this.playerTank.collisionRadius;
         
         // Guardar la posición original antes de resolver colisiones
         const originalPosition = tankPosition.clone();
@@ -846,20 +855,12 @@ class GameController {
             const distance = Math.sqrt(dx * dx + dz * dz);
             const minDistance = tankRadius + objectRadius;
             
-            // Si hay colisión
-            if (distance < minDistance) {
+            // Si hay colisión: distancia ≤ r1 + r2
+            if (distance <= minDistance) {
                 collisionDetected = true;
                 
                 // Crear un vector de dirección desde el objeto al tanque
-                const collisionNormal = new THREE.Vector3(dx, 0, dz);
-                
-                // Normalizar solo si la distancia no es cero
-                if (distance > 0.001) {
-                    collisionNormal.normalize();
-                } else {
-                    // Si están exactamente en el mismo lugar, mover en una dirección aleatoria
-                    collisionNormal.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
-                }
+                const collisionNormal = new THREE.Vector3(dx, 0, dz).normalize();
                 
                 // Calcular la distancia de penetración con un margen adicional más grande
                 // Esto evitará que el tanque atraviese parcialmente los obstáculos
@@ -996,8 +997,8 @@ class GameController {
         const tankMesh = enemyTank.getMesh();
         const tankPosition = tankMesh.position.clone();
         
-        // Radio de colisión del tanque
-        const tankRadius = 2.2;
+        // Usar el radio de colisión basado en la masa del tanque enemigo
+        const enemyRadius = enemyTank.collisionRadius;
         
         // Comprobar colisiones con rocas y edificios
         const collidableObjects = [...this.rocks, ...this.buildings.map(building => building.getMesh())];
@@ -1013,7 +1014,7 @@ class GameController {
             const distance = Math.sqrt(dx * dx + dz * dz);
             
             // Comprobar si hay colisión
-            const minDistance = tankRadius + object.userData.physics.boundingRadius;
+            const minDistance = enemyRadius + object.userData.physics.boundingRadius;
             if (distance < minDistance) {
                 // Calcular vector de desplazamiento
                 const overlap = minDistance - distance;
@@ -1025,6 +1026,9 @@ class GameController {
                 
                 // Reducir la velocidad del tanque
                 enemyTank.reduceSpeed(0.5);
+                
+                // Notificar al tanque enemigo de la colisión
+                enemyTank.handleCollision();
             }
         }
         
@@ -1035,23 +1039,83 @@ class GameController {
             const dz = tankPosition.z - playerPosition.z;
             const distance = Math.sqrt(dx * dx + dz * dz);
             
-            // Comprobar si hay colisión
-            const minDistance = tankRadius + 2.2; // Radio del tanque del jugador
-            if (distance < minDistance) {
+            // Usar los radios de colisión basados en la masa de ambos tanques
+            const playerRadius = this.playerTank.collisionRadius;
+            
+            // Comprobar si hay colisión: distancia ≤ r1 + r2
+            const minDistance = enemyRadius + playerRadius;
+            if (distance <= minDistance) {
                 // Calcular vector de desplazamiento
                 const overlap = minDistance - distance;
                 const direction = new THREE.Vector3(dx, 0, dz).normalize();
                 
-                // Desplazar ambos tanques
-                tankMesh.position.x += direction.x * overlap * 0.5;
-                tankMesh.position.z += direction.z * overlap * 0.5;
+                // Desplazar ambos tanques proporcionalmente a sus masas
+                // Un tanque más pesado se mueve menos que uno ligero
+                const totalMass = enemyTank.mass + this.playerTank.mass;
+                const enemyRatio = this.playerTank.mass / totalMass;
+                const playerRatio = enemyTank.mass / totalMass;
                 
-                this.playerTank.getMesh().position.x -= direction.x * overlap * 0.5;
-                this.playerTank.getMesh().position.z -= direction.z * overlap * 0.5;
+                // Aplicar desplazamiento proporcional a la masa
+                tankMesh.position.x += direction.x * overlap * enemyRatio;
+                tankMesh.position.z += direction.z * overlap * enemyRatio;
+                
+                this.playerTank.getMesh().position.x -= direction.x * overlap * playerRatio;
+                this.playerTank.getMesh().position.z -= direction.z * overlap * playerRatio;
                 
                 // Reducir la velocidad de ambos tanques
                 enemyTank.reduceSpeed(0.5);
                 this.playerTank.reduceSpeed(0.5);
+                
+                // Notificar a ambos tanques de la colisión
+                enemyTank.handleCollision();
+                this.playerTank.handleCollision();
+                
+                // Registrar la colisión en la consola para depuración
+                console.log(`Colisión entre tanques: Distancia=${distance.toFixed(2)}, Suma de radios=${minDistance.toFixed(2)}`);
+                console.log(`Tanque enemigo: Masa=${enemyTank.mass.toFixed(2)}, Radio=${enemyRadius.toFixed(2)}`);
+                console.log(`Tanque jugador: Masa=${this.playerTank.mass.toFixed(2)}, Radio=${playerRadius.toFixed(2)}`);
+            }
+        }
+        
+        // Comprobar colisiones con otros tanques enemigos
+        for (const otherTank of this.enemyTanks) {
+            // Evitar comprobar colisión consigo mismo
+            if (otherTank === enemyTank || !otherTank.active) continue;
+            
+            const otherPosition = otherTank.getMesh().position;
+            const dx = tankPosition.x - otherPosition.x;
+            const dz = tankPosition.z - otherPosition.z;
+            const distance = Math.sqrt(dx * dx + dz * dz);
+            
+            // Usar los radios de colisión basados en la masa de ambos tanques
+            const otherRadius = otherTank.collisionRadius;
+            
+            // Comprobar si hay colisión: distancia ≤ r1 + r2
+            const minDistance = enemyRadius + otherRadius;
+            if (distance <= minDistance) {
+                // Calcular vector de desplazamiento
+                const overlap = minDistance - distance;
+                const direction = new THREE.Vector3(dx, 0, dz).normalize();
+                
+                // Desplazar ambos tanques proporcionalmente a sus masas
+                const totalMass = enemyTank.mass + otherTank.mass;
+                const enemyRatio = otherTank.mass / totalMass;
+                const otherRatio = enemyTank.mass / totalMass;
+                
+                // Aplicar desplazamiento proporcional a la masa
+                tankMesh.position.x += direction.x * overlap * enemyRatio;
+                tankMesh.position.z += direction.z * overlap * enemyRatio;
+                
+                otherTank.getMesh().position.x -= direction.x * overlap * otherRatio;
+                otherTank.getMesh().position.z -= direction.z * overlap * otherRatio;
+                
+                // Reducir la velocidad de ambos tanques
+                enemyTank.reduceSpeed(0.5);
+                otherTank.reduceSpeed(0.5);
+                
+                // Notificar a ambos tanques de la colisión
+                enemyTank.handleCollision();
+                otherTank.handleCollision();
             }
         }
     }

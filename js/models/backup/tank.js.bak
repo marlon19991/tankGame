@@ -1,0 +1,193 @@
+// Importar los componentes y utilidades necesarios
+import { TankPhysics } from '../components/TankPhysics.js';
+import { TankVisuals } from '../components/TankVisuals.js';
+import { TankEffects } from '../components/TankEffects.js';
+import { TankWeapons } from '../components/TankWeapons.js';
+import { TankCollision } from '../components/TankCollision.js';
+import { TankTerrainAdapter } from '../components/TankTerrainAdapter.js';
+import { Projectile } from './projectile.js';
+import { Pellet } from './pellet.js';
+
+/**
+ * Clase principal del tanque que integra todos los componentes
+ * Implementa un patrón de composición para dividir la funcionalidad
+ */
+class Tank {
+    constructor(scene, x, y, z) {
+        this.scene = scene;
+        
+        // Estado del tanque
+        this.health = 100;
+        this.active = true;
+        this.isInvulnerable = false;
+        this.isFlashingDamage = false;
+        this.lastSelfDamageState = false;
+        
+        // Inicializar componentes
+        this.physics = new TankPhysics(this);
+        this.visuals = new TankVisuals(this, scene);
+        this.effects = new TankEffects(this, scene);
+        this.weapons = new TankWeapons(this, scene);
+        this.collision = new TankCollision(this);
+        this.terrainAdapter = new TankTerrainAdapter(this);
+        
+        // Crear el modelo del tanque
+        this.visuals.createTankModel(x, y, z);
+        
+        // Aplicar la escala inicial basada en la masa
+        this.physics.updateScale();
+        
+        // Calcular la velocidad inicial basada en la masa
+        this.physics.updateSpeed();
+    }
+    
+    /**
+     * Método principal de actualización que delega a los componentes
+     */
+    update(deltaTime, inputController, gameController) {
+        if (!this.active) return;
+        
+        // Actualizar la física del movimiento
+        this.physics.updateMovement(deltaTime, inputController);
+        
+        // Actualizar la rotación de la torreta
+        this.weapons.updateTurretRotation(deltaTime, inputController);
+        
+        // Comprobar el disparo
+        this.weapons.checkFiring(inputController, gameController);
+        
+        // Manejar el auto-daño (para pruebas)
+        this.handleSelfDamage(inputController);
+        
+        // Manejar la embestida
+        this.physics.updateRamming(deltaTime, inputController);
+        
+        // Verificar colisiones con otros tanques
+        if (gameController && gameController.enemyTanks) {
+            this.handleTankCollisions(gameController);
+        }
+        
+        // Adaptar el tanque a la superficie del terreno
+        if (gameController && gameController.terrain) {
+            this.terrainAdapter.adaptToTerrain(gameController.terrain);
+        }
+    }
+    
+    /**
+     * Maneja la lógica de auto-daño para pruebas
+     */
+    handleSelfDamage(inputController) {
+        if (!this.lastSelfDamageState && inputController.isSelfDamagePressed()) {
+            this.takeDamage(10);
+            console.log("Auto-daño aplicado. Masa actual:", this.physics.mass.toFixed(2), 
+                        "Velocidad máxima:", this.physics.maxSpeed.toFixed(2));
+        }
+        this.lastSelfDamageState = inputController.isSelfDamagePressed();
+    }
+    
+    /**
+     * Maneja las colisiones con otros tanques
+     */
+    handleTankCollisions(gameController) {
+        // Para el tanque del jugador, verificar colisiones con tanques enemigos
+        if (this === gameController.playerTank) {
+            this.collision.checkEnemyTankCollisions(gameController.enemyTanks);
+        } 
+        // Para tanques enemigos, verificar colisiones con el tanque del jugador y otros enemigos
+        else {
+            const allTanks = [gameController.playerTank, 
+                             ...gameController.enemyTanks.filter(tank => tank !== this)];
+            this.collision.checkEnemyTankCollisions(allTanks);
+        }
+    }
+    
+    /**
+     * Método para que el tanque reciba daño
+     */
+    takeDamage(amount) {
+        // Si el tanque está en modo embestida, no recibir daño
+        if (this.isInvulnerable) {
+            console.log("Tanque invulnerable durante la embestida - No recibe daño");
+            return;
+        }
+        
+        // Asegurarse de que amount es un número válido
+        const damageAmount = Number(amount) || 20;
+        
+        // Aplicar el daño
+        this.health = Math.max(0, this.health - damageAmount);
+        console.log(`Tanque dañado con ${damageAmount}. Salud restante: ${this.health}`);
+        
+        // Reducir la masa proporcionalmente al daño recibido (10% del daño)
+        const massReduction = damageAmount * 0.1;
+        const oldMass = this.physics.mass;
+        this.physics.updateMass(Math.max(1, this.physics.mass - massReduction)); // Mínimo de masa = 1
+        
+        // Registrar la pérdida de masa
+        console.log(`Masa reducida de ${oldMass.toFixed(2)} a ${this.physics.mass.toFixed(2)} (pérdida: ${massReduction.toFixed(2)})`);
+        
+        // Efecto visual de daño (parpadeo rojo más intenso)
+        this.effects.flashDamage();
+        
+        // Si la salud llega a 0, destruir el tanque
+        if (this.health <= 0) {
+            console.log("¡Tanque destruido!");
+            this.active = false;
+            // Crear una explosión grande al ser destruido
+            if (this.scene) {
+                const position = this.visuals.tankGroup.position;
+                this.effects.createDestructionEffect(position.x, position.y, position.z);
+            }
+        }
+    }
+    
+    /**
+     * Aumenta la masa del tanque al recoger un pellet
+     */
+    increaseMass(amount) {
+        // Aumentar la masa
+        const newMass = this.physics.mass + amount;
+        
+        // Actualizar la masa y propiedades relacionadas
+        this.physics.updateMass(newMass);
+        
+        // Efecto visual de crecimiento
+        this.effects.playGrowthEffect(amount);
+        
+        console.log(`Tanque aumentó su masa en ${amount}. Nueva masa: ${this.physics.mass}`);
+        
+        return this.physics.mass;
+    }
+    
+    // Métodos de acceso a propiedades del tanque
+    
+    getMesh() {
+        return this.visuals.tankGroup;
+    }
+    
+    getPosition() {
+        return this.visuals.tankGroup.position.clone();
+    }
+    
+    getDirection(targetVector) {
+        return this.physics.getDirection(targetVector);
+    }
+    
+    getTurretPosition() {
+        return this.weapons.getTurretPosition();
+    }
+    
+    getTurretDirection() {
+        return this.weapons.getTurretDirection();
+    }
+    
+    getCannonDirection() {
+        return this.weapons.getCannonDirection();
+    }
+    
+    getVelocityVector(targetVector) {
+        return this.physics.getVelocityVector(targetVector);
+    }
+}
+
+export { Tank };

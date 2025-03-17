@@ -13,7 +13,8 @@ class InputController {
             fire: false,
             cameraToggle: false,  // Tecla para cambiar la cámara
             selfDamage: false,    // Nueva tecla para auto-daño
-            statsToggle: false    // Nueva tecla para mostrar estadísticas
+            statsToggle: false,   // Nueva tecla para mostrar estadísticas
+            ramming: false        // Nueva tecla para activar la embestida
         };
         
         // Estado para controlar el cambio de cámara
@@ -101,6 +102,14 @@ class InputController {
                 }
                 this.keys.statsToggle = isPressed;
                 break;
+                
+            // Embestida con la tecla 4
+            case 'Digit4':
+                this.keys.ramming = isPressed;
+                if (isPressed) {
+                    console.log("¡Embestida activada!");
+                }
+                break;
         }
     }
     
@@ -158,5 +167,13 @@ class InputController {
     // Nuevo método para verificar si las estadísticas deben mostrarse
     shouldShowStats() {
         return this.showStats;
+    }
+    
+    /**
+     * Verifica si la tecla de embestida está presionada
+     * @returns {boolean} true si la tecla de embestida está presionada
+     */
+    isRammingPressed() {
+        return this.keys.ramming;
     }
 }
